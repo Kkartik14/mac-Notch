@@ -101,7 +101,12 @@ struct NotificationActivity: Equatable {
     var icon: String
 }
 
-struct FocusActivity: Equatable { var mode: String }
+struct FocusActivity: Equatable {
+    var mode: String
+    /// SF symbol name, or raw emoji/text when custom. Rendered via
+    /// FocusMonitor.isSFSymbol check.
+    var symbol: String = "moon.fill"
+}
 struct WeatherActivity: Equatable {
     var temperatureC: Int
     var condition: String
@@ -117,6 +122,8 @@ struct WeatherActivity: Equatable {
 final class IslandCenter: ObservableObject {
     @Published var islands: [IslandActivity] = []
     @Published var expandedId: String?
+    /// Latest battery fraction for pills that show it (focus trailing).
+    @Published var batteryLevel: Double?
     var deliver: ((IslandActivity) -> Void)?
 
     /// Priority (higher = shows on top). Ambient order: music > focus >
@@ -298,6 +305,11 @@ final class IslandCenter: ObservableObject {
     }
 
     func cancelTimer() { dismiss("timer") }
+
+    /// Cache the latest battery level for pills (focus trailing shows it).
+    func updateBatteryLevel(_ level: Double) {
+        if batteryLevel != level { batteryLevel = level }
+    }
 
     /// Silent progress correction from the monitor (3s poll). Updates the
     /// island's copy in place — never expands, never hijacks.
@@ -793,6 +805,8 @@ struct IslandView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.green)
                 .frame(width: 20, height: 20)
+        case .focus(let f):
+            focusGlyph(for: f, size: 20)
         default:
             inlineDot(for: activity)
         }
@@ -816,9 +830,34 @@ struct IslandView: View {
             Text("\(w.temperatureC)°")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.white)
+        case .focus:
+            // Battery number, no % — the moon lives on the left.
+            if let level = center.batteryLevel {
+                Text("\(Int((level * 100).rounded()))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+            } else {
+                inlineDot(for: activity)
+            }
         default:
             inlineDot(for: activity)
         }
+    }
+
+    /// Live focus-mode glyph: SF symbol when valid, raw emoji/text when the
+    /// mode uses a custom icon. Always 1:1 with the system mode.
+    private func focusGlyph(for activity: FocusActivity, size: CGFloat) -> some View {
+        Group {
+            if FocusMonitor.isSFSymbol(activity.symbol) {
+                Image(systemName: activity.symbol)
+                    .font(.system(size: size * 0.5, weight: .semibold))
+                    .foregroundColor(.white)
+            } else {
+                Text(activity.symbol)
+                    .font(.system(size: size * 0.6))
+            }
+        }
+        .frame(width: size, height: size)
     }
 
     private func inlineDot(for activity: IslandActivity) -> some View {
@@ -901,12 +940,19 @@ struct IslandView: View {
 
     @ViewBuilder
     private func icon(for activity: IslandActivity, size: CGFloat) -> some View {
-        let (name, color) = iconSpec(for: activity)
-        ZStack {
-            Circle().fill(color.opacity(0.95)).frame(width: size, height: size)
-            Image(systemName: name)
-                .foregroundColor(.white)
-                .font(.system(size: size * 0.45, weight: .bold))
+        if case .focus(let f) = activity, !FocusMonitor.isSFSymbol(f.symbol) {
+            ZStack {
+                Circle().fill(Color.indigo.opacity(0.95)).frame(width: size, height: size)
+                Text(f.symbol).font(.system(size: size * 0.55))
+            }
+        } else {
+            let (name, color) = iconSpec(for: activity)
+            ZStack {
+                Circle().fill(color.opacity(0.95)).frame(width: size, height: size)
+                Image(systemName: name)
+                    .foregroundColor(.white)
+                    .font(.system(size: size * 0.45, weight: .bold))
+            }
         }
     }
 
@@ -916,7 +962,7 @@ struct IslandView: View {
         case .nowPlaying: return ("music.note", .pink)
         case .charging: return ("bolt.fill", .green)
         case .notification: return ("message.fill", .purple)
-        case .focus: return ("moon.fill", .indigo)
+        case .focus(let f): return (FocusMonitor.isSFSymbol(f.symbol) ? f.symbol : "moon.fill", .indigo)
         case .weather(let w): return (w.symbol, .blue)
         }
     }
@@ -927,7 +973,7 @@ struct IslandView: View {
         case .nowPlaying: return "Now Playing"
         case .charging: return "Battery"
         case .notification(let n): return n.appName
-        case .focus: return "Focus"
+        case .focus(let f): return f.mode
         case .weather: return "Weather"
         }
     }
@@ -1191,9 +1237,14 @@ struct FocusExpandedView: View {
                                          startPoint: .topLeading,
                                          endPoint: .bottomTrailing))
                     .frame(width: 56, height: 56)
-                Image(systemName: "moon.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(.white)
+                if FocusMonitor.isSFSymbol(activity.symbol) {
+                    Image(systemName: activity.symbol)
+                        .font(.system(size: 24))
+                        .foregroundColor(.white)
+                } else {
+                    Text(activity.symbol)
+                        .font(.system(size: 28))
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(activity.mode)

@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let musicMonitor = MusicAppMonitor()
     private let batteryMonitor = BatteryMonitor()
     private let weatherMonitor = WeatherMonitor()
+    private let focusMonitor = FocusMonitor()
     private var wasPluggedIn = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // plugged update quietly in rank position.
         batteryMonitor.start { [weak self] charge in
             guard let self else { return }
+            self.island.center.updateBatteryLevel(charge.level)
             if charge.pluggedIn {
                 let isNewPlug = !self.wasPluggedIn
                 self.wasPluggedIn = true
@@ -118,6 +120,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         weatherMonitor.start { [weak self] activity in
             self?.island.show(.weather(activity), autoDismissAfter: nil, expand: false)
         }
+
+        // Focus — live system mode via disk adapter (silent without FDA).
+        // Pops once on activation, settles; turning it off clears the card.
+        focusMonitor.onUpdate = { [weak self] state in
+            self?.island.show(.focus(FocusActivity(mode: state.name, symbol: state.symbol)),
+                              autoDismissAfter: nil, expand: true, collapseAfter: 6)
+        }
+        focusMonitor.onClear = { [weak self] in
+            self?.island.center.dismiss("focus")
+        }
+        focusMonitor.start()
     }
 
     private func makeContextMenu() -> NSMenu {
@@ -189,6 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showNowPlaying() {
         nowPlayingMonitor.refresh()
         musicMonitor.refresh()
+        focusMonitor.refresh()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self else { return }
             let cur = self.musicMonitor.current ?? self.nowPlayingMonitor.current
@@ -214,7 +228,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showFocus() {
-        island.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: true)
+        if let live = focusMonitor.current {
+            island.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: true)
+        } else {
+            island.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: true)
+        }
     }
 
     /// Preview any activity as a settled pill (expand:false), live data when
@@ -243,7 +261,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "notification":
             island.show(.notification(NotificationActivity(appName: "Messages", sender: "Henrik", body: "Psst… it's interactive.", icon: "message.fill")), autoDismissAfter: nil, expand: false)
         case "focus":
-            island.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: false)
+            if let live = focusMonitor.current {
+                island.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: false)
+            } else {
+                island.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: false)
+            }
         default:
             break
         }
