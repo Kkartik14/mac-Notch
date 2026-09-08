@@ -1,0 +1,26 @@
+# Swift / SPM
+.build/
+.swiftpm/
+*.o
+*.d
+
+# Xcode
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+DerivedData/
+*.moved-aside
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+
+# Build output (rebuilt via ./bundle.sh)
+Alcove.app/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Local docs, previews, scratch — never pushed
+local/
