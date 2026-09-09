@@ -17,10 +17,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let island = IslandWindowController()
     private let nowPlayingMonitor = NowPlayingMonitor()
     private let musicMonitor = MusicAppMonitor()
+    private let spotifyMonitor = SpotifyMonitor()
     private let batteryMonitor = BatteryMonitor()
     private let weatherMonitor = WeatherMonitor()
     private let focusMonitor = FocusMonitor()
     private var wasPluggedIn = false
+
+    /// Transport routing: the player that is currently playing owns the
+    /// keys. Otherwise prefer Spotify, then Music, then system MediaRemote.
+    private var spotifyPlaying: Bool { spotifyMonitor.current?.isPlaying == true }
+    private var musicPlaying: Bool { musicMonitor.current?.isPlaying == true }
+    private func routePlayPause() {
+        if spotifyPlaying || (!musicPlaying && SpotifyMonitor.isSpotifyRunning) { spotifyMonitor.playPause() }
+        else { musicMonitor.playPause() }
+    }
+    private func routeNext() {
+        if spotifyPlaying || (!musicPlaying && SpotifyMonitor.isSpotifyRunning) { spotifyMonitor.next() }
+        else { musicMonitor.next() }
+    }
+    private func routePrev() {
+        if spotifyPlaying || (!musicPlaying && SpotifyMonitor.isSpotifyRunning) { spotifyMonitor.previous() }
+        else { musicMonitor.previous() }
+    }
+    private func routeSeek(_ seconds: TimeInterval) {
+        // Seek belongs to the card on screen.
+        if case .nowPlaying(let n) = island.center.islands.first(where: { $0.id == "nowPlaying" }) {
+            if n.appName == "Spotify" { spotifyMonitor.seek(to: seconds); return }
+        }
+        musicMonitor.seek(to: seconds)
+    }
+    /// After one source goes quiet: keep whichever source still has a
+    /// playing track (quietly), else drop the card.
+    private func resolveNowPlayingAfterClear() {
+        if spotifyPlaying, let cur = spotifyMonitor.current {
+            island.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+        } else if musicPlaying, let cur = musicMonitor.current {
+            island.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+        } else {
+            island.center.dismiss("nowPlaying")
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -53,12 +89,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startMonitors() {
-        // Media keys: AppleScript transport while Music runs (MediaRemote
-        // reads are dead for our process), MediaRemote otherwise.
-        island.center.onPlayPause = { [weak self] in self?.musicMonitor.playPause() }
-        island.center.onNextTrack = { [weak self] in self?.musicMonitor.next() }
-        island.center.onPreviousTrack = { [weak self] in self?.musicMonitor.previous() }
-        island.center.onSeek = { [weak self] in self?.musicMonitor.seek(to: $0) }
+        // Media keys + seek: routed to whichever player owns playback.
+        island.center.onPlayPause = { [weak self] in self?.routePlayPause() }
+        island.center.onNextTrack = { [weak self] in self?.routeNext() }
+        island.center.onPreviousTrack = { [weak self] in self?.routePrev() }
+        island.center.onSeek = { [weak self] in self?.routeSeek($0) }
 
         // Now Playing — track changes pop the card open and it STAYS open
         // until dismissed. No auto-collapse: collapsing on its own is what
@@ -78,12 +113,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.island.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
         }
         musicMonitor.onClear = { [weak self] in
-            self?.island.center.dismiss("nowPlaying")
+            self?.resolveNowPlayingAfterClear()
         }
         musicMonitor.onProgress = { [weak self] elapsed, duration, isPlaying in
             self?.island.center.updateNowPlayingProgress(elapsed: elapsed, duration: duration, isPlaying: isPlaying)
         }
         musicMonitor.start()
+
+        // Spotify via scripting — same treatment. Playing source wins the card.
+        spotifyMonitor.onUpdate = { [weak self] activity, _ in
+            self?.island.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
+        }
+        spotifyMonitor.onClear = { [weak self] in
+            self?.resolveNowPlayingAfterClear()
+        }
+        spotifyMonitor.onProgress = { [weak self] elapsed, duration, isPlaying in
+            self?.island.center.updateNowPlayingProgress(elapsed: elapsed, duration: duration, isPlaying: isPlaying)
+        }
+        spotifyMonitor.onArtwork = { [weak self] data in
+            self?.island.center.updateNowPlayingArtwork(data)
+        }
+        spotifyMonitor.start()
 
         // Battery — fresh plug jumps to the top for 2s (card pops, then
         // priority order returns), unplug clears it. Level changes while
@@ -202,10 +252,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showNowPlaying() {
         nowPlayingMonitor.refresh()
         musicMonitor.refresh()
+        spotifyMonitor.refresh()
         focusMonitor.refresh()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self else { return }
-            let cur = self.musicMonitor.current ?? self.nowPlayingMonitor.current
+            // Whoever is playing wins; else newest known.
+            let cur: NowPlayingActivity?
+            if self.spotifyPlaying { cur = self.spotifyMonitor.current }
+            else if self.musicPlaying { cur = self.musicMonitor.current }
+            else { cur = self.spotifyMonitor.current ?? self.musicMonitor.current ?? self.nowPlayingMonitor.current }
             guard let cur else { return }
             self.island.show(.nowPlaying(cur), autoDismissAfter: nil, expand: true)
         }

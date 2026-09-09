@@ -311,6 +311,15 @@ final class IslandCenter: ObservableObject {
         if batteryLevel != level { batteryLevel = level }
     }
 
+    /// Attach late-arriving artwork (e.g. downloaded URLs) without
+    /// re-expanding or resetting the collapse timer.
+    func updateNowPlayingArtwork(_ data: Data) {
+        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = islands[idx] else { return }
+        n.artworkData = data
+        islands[idx] = .nowPlaying(n)
+    }
+
     /// Silent progress correction from the monitor (3s poll). Updates the
     /// island's copy in place — never expands, never hijacks.
     func updateNowPlayingProgress(elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool) {

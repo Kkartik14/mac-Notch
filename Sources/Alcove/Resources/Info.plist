@@ -21,6 +21,6 @@
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Alcove shows the current weather in the island.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Alcove reads the current track from Music to show it in the island.</string>
+    <string>Alcove reads the current track from Music and Spotify to show it in the island.</string>
 </dict>
 </plist>
