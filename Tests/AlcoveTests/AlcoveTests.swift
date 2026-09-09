@@ -275,6 +275,33 @@ final class PriorityTests: XCTestCase {
     }
 }
 
+// MARK: - Notification parsing
+
+final class NotificationParseTests: XCTestCase {
+    private func samplePayload() -> Data {
+        let req: [String: Any] = [
+            "titl": "Cutu Prii", "subt": "2 messages",
+            "body": "Bitch behaviour", "cate": "x",
+        ]
+        let plist: [String: Any] = [
+            "app": "com.apple.MobileSMS", "date": 810576430.6, "req": req,
+        ]
+        return try! PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+    }
+
+    func testParsesTitleSubtitleBody() {
+        let note = NotificationMonitor.parse(data: samplePayload(), appIdentifier: "com.apple.MobileSMS")!
+        XCTAssertEqual(note.title, "Cutu Prii")
+        XCTAssertEqual(note.subtitle, "2 messages")
+        XCTAssertEqual(note.body, "Bitch behaviour")
+        XCTAssertEqual(note.appIdentifier, "com.apple.MobileSMS")
+    }
+
+    func testRejectsGarbage() {
+        XCTAssertNil(NotificationMonitor.parse(data: Data([0, 1, 2, 3]), appIdentifier: "x"))
+    }
+}
+
 // MARK: - MediaRemote: never crash without a player
 
 final class MediaRemoteTests: XCTestCase {

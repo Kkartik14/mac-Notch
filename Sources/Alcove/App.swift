@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let batteryMonitor = BatteryMonitor()
     private let weatherMonitor = WeatherMonitor()
     private let focusMonitor = FocusMonitor()
+    private let notificationMonitor = NotificationMonitor()
     private var wasPluggedIn = false
 
     /// Transport routing: the player that is currently playing owns the
@@ -181,6 +182,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.island.center.dismiss("focus")
         }
         focusMonitor.start()
+
+        // Real notifications via store adapter (silent without FDA).
+        // Quiet 3s pill only — never pops the card.
+        notificationMonitor.onNew = { [weak self] note in
+            guard let self else { return }
+            let sender = note.title.isEmpty ? note.subtitle : note.title
+            let body = note.subtitle.isEmpty || note.subtitle == sender ? note.body : "\(note.subtitle)\n\(note.body)"
+            self.island.show(.notification(NotificationActivity(
+                appName: self.notificationMonitor.displayName(for: note.appIdentifier),
+                sender: sender.isEmpty ? self.notificationMonitor.displayName(for: note.appIdentifier) : sender,
+                body: body,
+                icon: "bell.fill",
+                appIconData: self.notificationMonitor.iconData(for: note.appIdentifier)
+            )), autoDismissAfter: 3, expand: false)
+        }
+        notificationMonitor.start()
     }
 
     private func makeContextMenu() -> NSMenu {

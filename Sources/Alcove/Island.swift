@@ -99,6 +99,8 @@ struct NotificationActivity: Equatable {
     var sender: String
     var body: String
     var icon: String
+    /// Real app icon PNG bytes when resolvable; view falls back to `icon`.
+    var appIconData: Data? = nil
 }
 
 struct FocusActivity: Equatable {
@@ -870,14 +872,25 @@ struct IslandView: View {
     }
 
     private func inlineDot(for activity: IslandActivity) -> some View {
+        // Real app icon wins over the generic dot (notifications).
+        if case .notification(let n) = activity,
+           let data = n.appIconData, let img = NSImage(data: data) {
+            return AnyView(
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 20, height: 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            )
+        }
         let (iconName, color) = iconSpec(for: activity)
-        return ZStack {
+        return AnyView(ZStack {
             Circle().fill(color.opacity(0.95)).frame(width: 18, height: 18)
             Image(systemName: iconName)
                 .foregroundColor(.white)
                 .font(.system(size: 9, weight: .bold))
         }
-        .frame(width: 20, height: 20)
+        .frame(width: 20, height: 20))
     }
 
     private func smallSplitPill(for activity: IslandActivity) -> some View {
@@ -954,6 +967,13 @@ struct IslandView: View {
                 Circle().fill(Color.indigo.opacity(0.95)).frame(width: size, height: size)
                 Text(f.symbol).font(.system(size: size * 0.55))
             }
+        } else if case .notification(let n) = activity,
+                  let data = n.appIconData, let img = NSImage(data: data) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
         } else {
             let (name, color) = iconSpec(for: activity)
             ZStack {
@@ -1211,15 +1231,23 @@ struct NotificationExpandedView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(colors: [.purple, .pink],
-                                         startPoint: .topLeading,
-                                         endPoint: .bottomTrailing))
+            if let data = activity.appIconData, let img = NSImage(data: data) {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: 40, height: 40)
-                Image(systemName: activity.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(colors: [.purple, .pink],
+                                             startPoint: .topLeading,
+                                             endPoint: .bottomTrailing))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: activity.icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(activity.sender)
