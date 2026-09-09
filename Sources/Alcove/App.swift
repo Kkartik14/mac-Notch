@@ -64,7 +64,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No menu-bar icon: the island is the entire UI. All actions live on
         // its right-click menu instead.
         island.actions = IslandActions(
-            showTimer: { [weak self] in self?.showTimer() },
             showNowPlaying: { [weak self] in self?.showNowPlaying() },
             showCharging: { [weak self] in self?.showCharging() },
             showNotification: { [weak self] in self?.showNotification() },
@@ -73,7 +72,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             previewPillMusic: { [weak self] in self?.previewPill("nowPlaying") },
             previewPillWeather: { [weak self] in self?.previewPill("weather") },
             previewPillCharging: { [weak self] in self?.previewPill("charging") },
-            previewPillTimer: { [weak self] in self?.previewPill("timer") },
             previewPillNotify: { [weak self] in self?.previewPill("notification") },
             previewPillFocus: { [weak self] in self?.previewPill("focus") },
             expandTop: { [weak self] in self?.island.expandTop() },
@@ -204,9 +202,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Alcove", action: nil, keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
-        let timerItem = NSMenuItem(title: "Timer · 60s", action: #selector(showTimer), keyEquivalent: "t")
-        timerItem.target = self
-        menu.addItem(timerItem)
         let musicItem = NSMenuItem(title: "Now Playing", action: #selector(showNowPlaying), keyEquivalent: "m")
         musicItem.target = self
         menu.addItem(musicItem)
@@ -227,7 +222,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("Pill · Music", #selector(previewPillMusic)),
             ("Pill · Weather", #selector(previewPillWeather)),
             ("Pill · Charging", #selector(previewPillCharging)),
-            ("Pill · Timer", #selector(previewPillTimer)),
             ("Pill · Notify", #selector(previewPillNotify)),
             ("Pill · Focus", #selector(previewPillFocus)),
         ]
@@ -253,15 +247,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quitItem = NSMenuItem(title: "Quit Alcove", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
         return menu
-    }
-
-    /// Real 60s countdown anchored to the device clock (`Date`), not a fake
-    /// animation: `endDate` is recomputed every tick so it survives sleep.
-    /// Stays open (no auto-dismiss); the tick dismisses it at zero.
-    @objc private func showTimer() {
-        var t = TimerActivity(seconds: 60, label: "Timer")
-        t.endDate = Date().addingTimeInterval(60)
-        island.show(.timer(t), autoDismissAfter: nil, expand: true)
     }
 
     /// Expand the real system Now Playing state (Music/Spotify/…). If nothing
@@ -311,10 +296,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// available, demo data otherwise. For testing pill designs.
     private func previewPill(_ id: String) {
         switch id {
-        case "timer":
-            var t = TimerActivity(seconds: 60, label: "Timer")
-            t.endDate = Date().addingTimeInterval(60)
-            island.show(.timer(t), autoDismissAfter: nil, expand: false)
         case "nowPlaying":
             let cur = musicMonitor.current ?? nowPlayingMonitor.current
                 ?? NowPlayingActivity(title: "Pray For Me", artist: "The Weeknd, Kendrick Lamar", album: "Starboy", appName: "Music", isPlaying: true, elapsed: 50, duration: 210)
@@ -346,7 +327,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func previewPillMusic() { previewPill("nowPlaying") }
     @objc private func previewPillWeather() { previewPill("weather") }
     @objc private func previewPillCharging() { previewPill("charging") }
-    @objc private func previewPillTimer() { previewPill("timer") }
     @objc private func previewPillNotify() { previewPill("notification") }
     @objc private func previewPillFocus() { previewPill("focus") }
 
