@@ -15,7 +15,7 @@ DerivedData/
 *.perspectivev3
 
 # Build output (rebuilt via ./bundle.sh)
-Alcove.app/
+Halo.app/
 
 # macOS
 .DS_Store

@@ -1,17 +1,17 @@
 # Troubleshooting
 
-## The island does not appear
+## The halo does not appear
 
-- Run the bundled app with open Alcove.app; a raw swift build only produces a binary and does not create the normal app bundle metadata.
+- Run the bundled app with open Halo.app; a raw swift build only produces a binary and does not create the normal app bundle metadata.
 - Check that the app is not already running as an accessory process.
-- Look for [Alcove] messages in Console.app or with the command in docs/testing.md.
+- Look for [Halo] messages in Console.app or with the command in docs/testing.md.
 - The app intentionally has no Dock or menu-bar icon. The black pill at the top of the main display is the primary UI.
 
 ## Music or Spotify is not detected
 
 - Start the target app and wait for the three-second monitor poll.
-- Check **System Settings → Privacy & Security → Automation** and allow Alcove to control the target app.
-- Use the island's right-click **Now Playing** action to force a refresh.
+- Check **System Settings → Privacy & Security → Automation** and allow Halo to control the target app.
+- Use the halo's right-click **Now Playing** action to force a refresh.
 - Music and Spotify are separate sources. If both are open, transport commands are routed toward the player that is currently playing.
 
 ## Play/pause/next works but the card is stale
@@ -43,7 +43,7 @@ The monitor scans on startup, watches the directory, and polls every ten seconds
 
 ## Focus is not live
 
-Grant Full Disk Access to the built Alcove.app, then restart the app. The monitor reads the two Focus database files directly and remains silent when they are inaccessible. The current fallback is a demo Do Not Disturb activity; there is not yet a manual mode picker.
+Grant Full Disk Access to the built Halo.app, then restart the app. The monitor reads the two Focus database files directly and remains silent when they are inaccessible. The current fallback is a demo Do Not Disturb activity; there is not yet a manual mode picker.
 
 ## Real notifications do not appear
 
@@ -51,7 +51,7 @@ Grant Full Disk Access to the built app and restart it. The notification monitor
 
 ## Weather is missing or looks wrong
 
-- Allow Location Services for Alcove.
+- Allow Location Services for Halo.
 - Check network access to Open-Meteo.
 - Wait for the initial location callback and request completion.
 - When no location is available, development fallback coordinates point to Cupertino, California.

@@ -62,7 +62,7 @@ final class SpotifyMonitor: ObservableObject {
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)
         if let error {
-            NSLog("[Alcove] spotify: script error: %@", error)
+            NSLog("[Halo] spotify: script error: %@", error)
             return
         }
         guard result.descriptorType != typeNull else { return }
@@ -77,7 +77,7 @@ final class SpotifyMonitor: ObservableObject {
         }
         let parts = text.components(separatedBy: "\u{1F}")
         guard parts.count >= 6 else {
-            NSLog("[Alcove] spotify: malformed payload (%d parts)", parts.count)
+            NSLog("[Halo] spotify: malformed payload (%d parts)", parts.count)
             return
         }
         let title = parts[0], artist = parts[1], album = parts[2]
@@ -122,7 +122,7 @@ final class SpotifyMonitor: ObservableObject {
             artworkData: nil
         )
         current = activity
-        NSLog("[Alcove] spotify: update %@ - %@ (%@)", title, artist, isPlaying ? "playing" : "paused")
+        NSLog("[Halo] spotify: update %@ - %@ (%@)", title, artist, isPlaying ? "playing" : "paused")
         onUpdate?(activity, nil)
         fetchArtwork(urlString: artURL, signature: signature)
     }
@@ -149,11 +149,11 @@ final class SpotifyMonitor: ObservableObject {
 
     private func command(_ verb: String) {
         guard Self.isSpotifyRunning else { return }
-        NSLog("[Alcove] spotify: command %@", verb)
+        NSLog("[Halo] spotify: command %@", verb)
         let source = "tell application \"Spotify\" to \(verb)"
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
-        if let error { NSLog("[Alcove] spotify: command error: %@", error) }
+        if let error { NSLog("[Halo] spotify: command error: %@", error) }
     }
 
     func playPause() {
@@ -172,11 +172,11 @@ final class SpotifyMonitor: ObservableObject {
     /// Jump playback to `seconds`.
     func seek(to seconds: TimeInterval) {
         guard Self.isSpotifyRunning else { return }
-        NSLog("[Alcove] spotify: seek %.1f", seconds)
+        NSLog("[Halo] spotify: seek %.1f", seconds)
         let source = "tell application \"Spotify\" to set player position to \(max(0, seconds))"
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
-        if let error { NSLog("[Alcove] spotify: seek error: %@", error) }
+        if let error { NSLog("[Halo] spotify: seek error: %@", error) }
         refresh()
     }
 }

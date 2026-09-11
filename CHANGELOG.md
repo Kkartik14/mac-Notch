@@ -8,7 +8,7 @@ This file records user-visible changes. The project is currently in active devel
 - Added Music playlist Up Next handling with direct playlist-row playback.
 - Added playback-session archive parsing for recently played tracks and true queue order.
 - Added progressive Apple Music/Spotify artwork and queue thumbnails.
-- Added fixed-window island morphing and pass-through input routing.
+- Added fixed-window halo morphing and pass-through input routing.
 - Added battery, weather, Focus, and notification monitors.
 - Added activity priority, collapse, dismissal, and progress interpolation behavior.
 - Added parser, state, positioning, and host-safety tests.

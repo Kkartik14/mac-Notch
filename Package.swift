@@ -2,17 +2,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "Alcove",
+    name: "Halo",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "Alcove", targets: ["Alcove"])
+        .executable(name: "Halo", targets: ["Halo"])
     ],
     targets: [
         .executableTarget(
-            name: "Alcove",
-            path: "Sources/Alcove",
+            name: "Halo",
+            path: "Sources/Halo",
             exclude: ["Resources/Info.plist"],
             resources: [
                 .copy("Resources/Info.plist")
@@ -27,9 +27,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "AlcoveTests",
-            dependencies: ["Alcove"],
-            path: "Tests/AlcoveTests"
+            name: "HaloTests",
+            dependencies: ["Halo"],
+            path: "Tests/HaloTests"
         )
     ]
 )

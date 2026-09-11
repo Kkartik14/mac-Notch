@@ -38,13 +38,13 @@ swift build -c release
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 
 # Run one test class or method
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter IslandCenterTests
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter HaloCenterTests
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpNextTests.testParsesNeighborRecords
 ~~~
 
 ## Test coverage
 
-[Tests/AlcoveTests/AlcoveTests.swift](../Tests/AlcoveTests/AlcoveTests.swift) currently covers:
+[Tests/HaloTests/HaloTests.swift](../Tests/HaloTests/HaloTests.swift) currently covers:
 
 - Initial, collapsed, expanded, auto-dismissed, and capped activity stacks.
 - Fixed-window origin math and the anti-slide center/top-edge contract.
@@ -79,10 +79,10 @@ Live integrations should be tested manually on a development Mac, because tests 
 
 ## Logs
 
-Runtime diagnostics use NSLog with the [Alcove] prefix. During development, inspect them with Console.app or a filtered stream such as:
+Runtime diagnostics use NSLog with the [Halo] prefix. During development, inspect them with Console.app or a filtered stream such as:
 
 ~~~bash
-log stream --info --predicate 'eventMessage CONTAINS "[Alcove]"'
+log stream --info --predicate 'eventMessage CONTAINS "[Halo]"'
 ~~~
 
 Keep tests focused on pure parsing/state behavior where possible. Monitor tests should inject or isolate external data rather than depending on the user's current media, location, notification history, or Focus state.

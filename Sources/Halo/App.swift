@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 @main
-struct AlcoveApp: App {
+struct HaloApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -14,7 +14,7 @@ struct AlcoveApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let island = IslandWindowController()
+    private let haloController = HaloWindowController()
     private let nowPlayingMonitor = NowPlayingMonitor()
     private let musicMonitor = MusicAppMonitor()
     private let spotifyMonitor = SpotifyMonitor()
@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private func routeSeek(_ seconds: TimeInterval) {
         // Seek belongs to the card on screen.
-        if case .nowPlaying(let n) = island.center.islands.first(where: { $0.id == "nowPlaying" }) {
+        if case .nowPlaying(let n) = haloController.center.activities.first(where: { $0.id == "nowPlaying" }) {
             if n.appName == "Spotify" { spotifyMonitor.seek(to: seconds); return }
         }
         musicMonitor.seek(to: seconds)
@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// track page (scripting cannot address catalog tracks).
     private func playQueued(_ item: UpNextItem) {
         if let pid = item.playlistID, let idx = item.trackIndex {
-            NSLog("[Alcove] music: play queued track %d of playlist %@", idx, pid)
+            NSLog("[Halo] music: play queued track %d of playlist %@", idx, pid)
             let source = """
             tell application "Music"
               try
@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             """
             var error: NSDictionary?
             let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
-            if let error { NSLog("[Alcove] music: play-queued error: %@", error) }
+            if let error { NSLog("[Halo] music: play-queued error: %@", error) }
             _ = result
             musicMonitor.refresh()
             return
@@ -75,22 +75,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if var u = item.url, u.hasPrefix("https://") {
             u = "music://" + u.dropFirst(8)
             if let url = URL(string: u) {
-                NSLog("[Alcove] music: open queued track %@", item.title)
+                NSLog("[Halo] music: open queued track %@", item.title)
                 NSWorkspace.shared.open(url)
             }
         } else {
-            NSLog("[Alcove] music: queued row not playable (%@)", item.title)
+            NSLog("[Halo] music: queued row not playable (%@)", item.title)
         }
     }
     /// After one source goes quiet: keep whichever source still has a
     /// playing track (quietly), else drop the card.
     private func resolveNowPlayingAfterClear() {
         if spotifyPlaying, let cur = spotifyMonitor.current {
-            island.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
         } else if musicPlaying, let cur = musicMonitor.current {
-            island.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
         } else {
-            island.center.dismiss("nowPlaying")
+            haloController.center.dismiss("nowPlaying")
         }
     }
 
@@ -100,26 +100,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// truth with guesses.
     private var sessionQueueSig: String?
     private func trackSig(of n: NowPlayingActivity) -> String { "\(n.title)|\(n.artist)" }
-    private func islandTrackSig() -> String? {
-        guard case .nowPlaying(let n) = island.center.islands.first(where: { $0.id == "nowPlaying" }) else { return nil }
+    private func haloTrackSig() -> String? {
+        guard case .nowPlaying(let n) = haloController.center.activities.first(where: { $0.id == "nowPlaying" }) else { return nil }
         return trackSig(of: n)
     }
     private func applySessionQueue(_ items: [UpNextItem], contextTitle: String) {
-        guard island.center.islands.contains(where: {
+        guard haloController.center.activities.contains(where: {
             if case .nowPlaying(let n) = $0 { return n.appName == "Music" }
             return false
         }) else { return }
         // Staleness gate: walk-back can land on an older context than what's
         // playing. A queue whose context track isn't on screen is dropped —
         // a wrong queue is worse than the history fallback.
-        if let playing = islandTrackSig().map({ trackTitle(of: $0) }),
+        if let playing = haloTrackSig().map({ trackTitle(of: $0) }),
            !contextTitle.isEmpty,
            !PlaybackHistoryMonitor.sameTrack(playing, contextTitle) {
-            NSLog("[Alcove] queue: dropped stale context %@ (playing %@)", contextTitle, playing)
+            NSLog("[Halo] queue: dropped stale context %@ (playing %@)", contextTitle, playing)
             return
         }
-        sessionQueueSig = islandTrackSig()
-        island.center.updateNowPlayingQueue(items)
+        sessionQueueSig = haloTrackSig()
+        haloController.center.updateNowPlayingQueue(items)
     }
 
     private func trackTitle(of sig: String) -> String {
@@ -129,15 +129,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyTierQueue(_ items: [UpNextItem]) {
         // A session queue already set for this exact track wins; stale tier
         // results (slower async) must not clobber it.
-        if let sig = islandTrackSig(), sig == sessionQueueSig { return }
-        island.center.updateNowPlayingQueue(items)
+        if let sig = haloTrackSig(), sig == sessionQueueSig { return }
+        haloController.center.updateNowPlayingQueue(items)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        // No menu-bar icon: the island is the entire UI. All actions live on
+        // No menu-bar icon: the halo is the entire UI. All actions live on
         // its right-click menu instead.
-        island.actions = IslandActions(
+        haloController.actions = HaloActions(
             showNowPlaying: { [weak self] in self?.showNowPlaying() },
             showCharging: { [weak self] in self?.showCharging() },
             showNotification: { [weak self] in self?.showNotification() },
@@ -148,12 +148,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             previewPillCharging: { [weak self] in self?.previewPill("charging") },
             previewPillNotify: { [weak self] in self?.previewPill("notification") },
             previewPillFocus: { [weak self] in self?.previewPill("focus") },
-            expandTop: { [weak self] in self?.island.expandTop() },
-            dismissAll: { [weak self] in self?.island.dismissAll() },
+            expandTop: { [weak self] in self?.haloController.expandTop() },
+            dismissAll: { [weak self] in self?.haloController.dismissAll() },
             openSettings: { [weak self] in self?.openSettings() },
             quit: { NSApplication.shared.terminate(nil) }
         )
-        island.install(contextMenu: makeContextMenu())
+        haloController.install(contextMenu: makeContextMenu())
         startMonitors()
     }
 
@@ -163,12 +163,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startMonitors() {
         // Media keys + seek: routed to whichever player owns playback.
-        island.center.onPlayPause = { [weak self] in self?.routePlayPause() }
-        island.center.onNextTrack = { [weak self] in self?.routeNext() }
-        island.center.onPreviousTrack = { [weak self] in self?.routePrev() }
-        island.center.onSeek = { [weak self] in self?.routeSeek($0) }
-        island.center.onPlayQueued = { [weak self] in self?.playQueued($0) }
-        island.center.onReplayRecent = { [weak self] track in
+        haloController.center.onPlayPause = { [weak self] in self?.routePlayPause() }
+        haloController.center.onNextTrack = { [weak self] in self?.routeNext() }
+        haloController.center.onPreviousTrack = { [weak self] in self?.routePrev() }
+        haloController.center.onSeek = { [weak self] in self?.routeSeek($0) }
+        haloController.center.onPlayQueued = { [weak self] in self?.playQueued($0) }
+        haloController.center.onReplayRecent = { [weak self] track in
             self?.replayRecent(track)
         }
 
@@ -177,23 +177,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // forced the expand/dismiss tap loop.
         nowPlayingMonitor.onUpdate = { [weak self] activity, _ in
             guard !MusicAppMonitor.isMusicRunning else { return }
-            self?.island.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
+            self?.haloController.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
         }
         nowPlayingMonitor.onClear = { [weak self] in
             guard !MusicAppMonitor.isMusicRunning else { return }
-            self?.island.center.dismiss("nowPlaying")
+            self?.haloController.center.dismiss("nowPlaying")
         }
         nowPlayingMonitor.start()
 
         // Apple Music via scripting — the reliable source on recent macOS.
         musicMonitor.onUpdate = { [weak self] activity, _ in
-            self?.island.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
+            self?.haloController.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
         }
         musicMonitor.onClear = { [weak self] in
             self?.resolveNowPlayingAfterClear()
         }
         musicMonitor.onProgress = { [weak self] elapsed, duration, isPlaying in
-            self?.island.center.updateNowPlayingProgress(elapsed: elapsed, duration: duration, isPlaying: isPlaying)
+            self?.haloController.center.updateNowPlayingProgress(elapsed: elapsed, duration: duration, isPlaying: isPlaying)
         }
         musicMonitor.onQueue = { [weak self] items in
             self?.applyTierQueue(items)
@@ -202,16 +202,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Spotify via scripting — same treatment. Playing source wins the card.
         spotifyMonitor.onUpdate = { [weak self] activity, _ in
-            self?.island.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
+            self?.haloController.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
         }
         spotifyMonitor.onClear = { [weak self] in
             self?.resolveNowPlayingAfterClear()
         }
         spotifyMonitor.onProgress = { [weak self] elapsed, duration, isPlaying in
-            self?.island.center.updateNowPlayingProgress(elapsed: elapsed, duration: duration, isPlaying: isPlaying)
+            self?.haloController.center.updateNowPlayingProgress(elapsed: elapsed, duration: duration, isPlaying: isPlaying)
         }
         spotifyMonitor.onArtwork = { [weak self] data in
-            self?.island.center.updateNowPlayingArtwork(data)
+            self?.haloController.center.updateNowPlayingArtwork(data)
         }
         spotifyMonitor.start()
 
@@ -220,11 +220,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // plugged update quietly in rank position.
         batteryMonitor.start { [weak self] charge in
             guard let self else { return }
-            self.island.center.updateBatteryLevel(charge.level)
+            self.haloController.center.updateBatteryLevel(charge.level)
             if charge.pluggedIn {
                 let isNewPlug = !self.wasPluggedIn
                 self.wasPluggedIn = true
-                self.island.show(
+                self.haloController.show(
                     .charging(ChargingActivity(
                         level: charge.level,
                         isPluggedIn: true,
@@ -235,37 +235,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     collapseAfter: isNewPlug ? 2 : nil
                 )
                 if isNewPlug {
-                    self.island.center.moveToTop("charging")
+                    self.haloController.center.moveToTop("charging")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                        self?.island.center.applyPriorityOrder()
+                        self?.haloController.center.applyPriorityOrder()
                     }
                 }
             } else {
                 self.wasPluggedIn = false
-                self.island.center.dismiss("charging")
+                self.haloController.center.dismiss("charging")
             }
         }
 
         // Weather — quiet pill, refreshes every 10 min. Never force-expands.
         weatherMonitor.start { [weak self] activity in
-            self?.island.show(.weather(activity), autoDismissAfter: nil, expand: false)
+            self?.haloController.show(.weather(activity), autoDismissAfter: nil, expand: false)
         }
 
         // Focus — live system mode via disk adapter (silent without FDA).
         // Pops once on activation, settles; turning it off clears the card.
         focusMonitor.onUpdate = { [weak self] state in
-            self?.island.show(.focus(FocusActivity(mode: state.name, symbol: state.symbol)),
+            self?.haloController.show(.focus(FocusActivity(mode: state.name, symbol: state.symbol)),
                               autoDismissAfter: nil, expand: true, collapseAfter: 6)
         }
         focusMonitor.onClear = { [weak self] in
-            self?.island.center.dismiss("focus")
+            self?.haloController.center.dismiss("focus")
         }
         focusMonitor.start()
 
         // Recently played — Music's session archives, zero permissions.
         // Feeds the fallback rail when the live queue is hidden.
         historyMonitor.onTracksChanged = { [weak self] tracks in
-            self?.island.center.updateNowPlayingRecent(tracks)
+            self?.haloController.center.updateNowPlayingRecent(tracks)
         }
         // True queue order from the session checkpoint. Beats scripting and
         // store guesses for the same track; gated on Music below.
@@ -280,7 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let sender = note.title.isEmpty ? note.subtitle : note.title
             let body = note.subtitle.isEmpty || note.subtitle == sender ? note.body : "\(note.subtitle)\n\(note.body)"
-            self.island.show(.notification(NotificationActivity(
+            self.haloController.show(.notification(NotificationActivity(
                 appName: self.notificationMonitor.displayName(for: note.appIdentifier),
                 sender: sender.isEmpty ? self.notificationMonitor.displayName(for: note.appIdentifier) : sender,
                 body: body,
@@ -299,13 +299,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let url = track.musicAppURL {
             NSWorkspace.shared.open(url)
         } else {
-            NSLog("[Alcove] replay: no url for %@", track.title)
+            NSLog("[Halo] replay: no url for %@", track.title)
         }
     }
 
     private func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Alcove", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "Halo", action: nil, keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         let musicItem = NSMenuItem(title: "Now Playing", action: #selector(showNowPlaying), keyEquivalent: "m")
         musicItem.target = self
@@ -349,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
-        let quitItem = NSMenuItem(title: "Quit Alcove", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Halo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
         return menu
     }
@@ -369,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             else if self.musicPlaying { cur = self.musicMonitor.current }
             else { cur = self.spotifyMonitor.current ?? self.musicMonitor.current ?? self.nowPlayingMonitor.current }
             guard let cur else { return }
-            self.island.show(.nowPlaying(cur), autoDismissAfter: nil, expand: true)
+            self.haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: true)
         }
     }
 
@@ -377,7 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showCharging() {
         batteryMonitor.refresh() // synchronous: `current` is fresh on return
         guard let cur = batteryMonitor.current else { return }
-        island.show(.charging(ChargingActivity(
+        haloController.show(.charging(ChargingActivity(
             level: cur.level,
             isPluggedIn: cur.pluggedIn,
             timeRemainingText: BatteryMonitor.etaText(minutes: cur.minutesRemaining)
@@ -386,14 +386,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showWeather() {
         guard let cur = weatherMonitor.current else { return }
-        island.show(.weather(cur), autoDismissAfter: nil, expand: true)
+        haloController.show(.weather(cur), autoDismissAfter: nil, expand: true)
     }
 
     @objc private func showFocus() {
         if let live = focusMonitor.current {
-            island.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: true)
+            haloController.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: true)
         } else {
-            island.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: true)
+            haloController.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: true)
         }
     }
 
@@ -404,25 +404,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "nowPlaying":
             let cur = musicMonitor.current ?? nowPlayingMonitor.current
                 ?? NowPlayingActivity(title: "Pray For Me", artist: "The Weeknd, Kendrick Lamar", album: "Starboy", appName: "Music", isPlaying: true, elapsed: 50, duration: 210)
-            island.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
         case "charging":
             batteryMonitor.refresh()
             let c = batteryMonitor.current
-            island.show(.charging(ChargingActivity(
+            haloController.show(.charging(ChargingActivity(
                 level: c?.level ?? 0.34,
                 isPluggedIn: c?.pluggedIn ?? true,
                 timeRemainingText: BatteryMonitor.etaText(minutes: c?.minutesRemaining ?? 40)
             )), autoDismissAfter: nil, expand: false)
         case "weather":
             let w = weatherMonitor.current ?? WeatherActivity(temperatureC: 30, condition: "Overcast", symbol: "cloud.fill", windKph: 12, highC: 31, lowC: 24, isDay: true)
-            island.show(.weather(w), autoDismissAfter: nil, expand: false)
+            haloController.show(.weather(w), autoDismissAfter: nil, expand: false)
         case "notification":
-            island.show(.notification(NotificationActivity(appName: "Messages", sender: "Henrik", body: "Psst… it's interactive.", icon: "message.fill")), autoDismissAfter: nil, expand: false)
+            haloController.show(.notification(NotificationActivity(appName: "Messages", sender: "Henrik", body: "Psst… it's interactive.", icon: "message.fill")), autoDismissAfter: nil, expand: false)
         case "focus":
             if let live = focusMonitor.current {
-                island.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: false)
+                haloController.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: false)
             } else {
-                island.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: false)
+                haloController.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: false)
             }
         default:
             break
@@ -436,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func previewPillFocus() { previewPill("focus") }
 
     @objc private func showNotification() {
-        island.show(.notification(NotificationActivity(
+        haloController.show(.notification(NotificationActivity(
             appName: "Messages",
             sender: "Henrik",
             body: "Psst… it's interactive.",
@@ -445,11 +445,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func expandTop() {
-        island.expandTop()
+        haloController.expandTop()
     }
 
     @objc private func dismissAll() {
-        island.dismissAll()
+        haloController.dismissAll()
     }
 
     @objc private func openSettings() {

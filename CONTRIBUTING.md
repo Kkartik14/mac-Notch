@@ -1,6 +1,6 @@
-# Contributing to Alcove
+# Contributing to Halo
 
-Thanks for helping improve Alcove. The project is a native Swift Package Manager macOS app, so changes should preserve the app's lightweight, source-adapter architecture and graceful behavior when permissions or external apps are unavailable.
+Thanks for helping improve Halo. The project is a native Swift Package Manager macOS app, so changes should preserve the app's lightweight, source-adapter architecture and graceful behavior when permissions or external apps are unavailable.
 
 ## Before changing code
 
@@ -10,7 +10,7 @@ Read:
 - [docs/architecture.md](docs/architecture.md) for state flow and source precedence.
 - [docs/testing.md](docs/testing.md) for the available test commands and host dependencies.
 
-Keep unrelated working-tree changes intact. Generated .build output and Alcove.app are ignored and should not be committed.
+Keep unrelated working-tree changes intact. Generated .build output and Halo.app are ignored and should not be committed.
 
 ## Development workflow
 
@@ -24,14 +24,14 @@ Run the app from a freshly generated bundle when validating TCC permissions or A
 
 ~~~bash
 ./bundle.sh
-open Alcove.app
+open Halo.app
 ~~~
 
 ## Design rules
 
 - Keep UI state on the main thread.
-- Use expand: false for passive refreshes so polling does not hijack the island.
-- Use the IslandCenter silent update methods for progress, artwork, queue, and recent-track changes; do not re-present an activity just to attach late data.
+- Use expand: false for passive refreshes so polling does not hijack the halo.
+- Use the HaloCenter silent update methods for progress, artwork, queue, and recent-track changes; do not re-present an activity just to attach late data.
 - Cancel timers, dispatch sources, URL tasks, and notification observers in stop/deinit paths.
 - Treat AppleScript, private MediaRemote, filesystem layouts, and network responses as unreliable external interfaces.
 - Fail soft when permission is absent or a payload changes shape. A missing activity is preferable to a fabricated one.
@@ -48,7 +48,7 @@ A monitor should generally:
 3. Store its latest valid value for manual refresh actions where appropriate.
 4. Deduplicate unchanged updates.
 5. Dispatch UI-facing callbacks on the main queue.
-6. Log failures with the [Alcove] prefix without spamming every poll.
+6. Log failures with the [Halo] prefix without spamming every poll.
 7. Provide a deterministic parser or formatter that can be unit tested.
 
 Then wire it in AppDelegate.startMonitors, add the corresponding activity case/view, and document its permission and fallback behavior.

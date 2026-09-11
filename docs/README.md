@@ -1,6 +1,6 @@
-# Alcove documentation
+# Halo documentation
 
-This directory contains the maintained technical documentation for Alcove.
+This directory contains the maintained technical documentation for Halo.
 
 ## Documents
 
@@ -9,7 +9,6 @@ This directory contains the maintained technical documentation for Alcove.
 - [Testing](testing.md) — toolchain setup, commands, coverage, host-dependent tests, and logging.
 - [Troubleshooting](troubleshooting.md) — common runtime, media, queue, permission, weather, and test issues.
 - [Release process](release.md) — versioning, local bundles, signing, notarization, and release checklist.
-- [Focus source decision](decisions/DEC-001-focus-source.md) — why Focus state uses a guarded disk adapter.
 
 The repository root contains the user-facing [README](../README.md), [contribution guide](../CONTRIBUTING.md), and [changelog](../CHANGELOG.md).
 
@@ -22,4 +21,4 @@ Update documentation when any of these change:
 - Activity priority, card timing, media routing, queue/replay behavior, or fallback behavior.
 - A public-facing feature or a known limitation.
 
-The local directory is intentionally ignored and contains scratch notes, previews, and backups. Important decisions should be copied into this tracked documentation directory.
+The local directory is intentionally ignored and contains scratch notes, previews, and backups. Only user-facing and maintainable engineering documentation belongs in this tracked documentation directory.

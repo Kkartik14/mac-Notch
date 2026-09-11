@@ -4,36 +4,36 @@ import Combine
 
 /// Morph timing: bouncy open, critically-damped close. SwiftUI owns all
 /// motion now; the window never animates (Plan B).
-private let islandOpenResponse = 0.42
-private let islandOpenDamping: Double = 0.8
-private let islandCloseResponse = 0.45
-private let islandCloseDamping: Double = 1.0
+private let haloOpenResponse = 0.42
+private let haloOpenDamping: Double = 0.8
+private let haloCloseResponse = 0.45
+private let haloCloseDamping: Double = 1.0
 
 /// Fixed window geometry (Plan B): the window never resizes or moves after
 /// placement. 640 content + shadow room. All morphing is SwiftUI content
 /// inside stationary glass — slide and lag have no mechanism left.
-private let islandWindowSize = CGSize(width: 660, height: 210)
+private let haloWindowSize = CGSize(width: 660, height: 210)
 
 /// Container sizes for content inside the fixed window.
-private let islandOpenSize = CGSize(width: 640, height: 190)
-private let islandClosedFallbackWidth: CGFloat = 185
-private let islandClosedHeight: CGFloat = 32
-private let islandRadiiOpen = (top: CGFloat(19), bottom: CGFloat(24))
-private let islandRadiiClosed = (top: CGFloat(6), bottom: CGFloat(14))
+private let haloOpenSize = CGSize(width: 640, height: 190)
+private let haloClosedFallbackWidth: CGFloat = 185
+private let haloClosedHeight: CGFloat = 32
+private let haloRadiiOpen = (top: CGFloat(19), bottom: CGFloat(24))
+private let haloRadiiClosed = (top: CGFloat(6), bottom: CGFloat(14))
 
 /// Closed pill width tracks the real camera housing when available.
-func islandClosedWidth() -> CGFloat {
+func haloClosedWidth() -> CGFloat {
     guard let screen = NSScreen.main,
           let left = screen.auxiliaryTopLeftArea,
           let right = screen.auxiliaryTopRightArea,
           left.maxX < right.minX
-    else { return islandClosedFallbackWidth }
+    else { return haloClosedFallbackWidth }
     return screen.frame.width - left.width - right.width + 4
 }
 
 // MARK: - Activity types
 
-enum IslandActivity: Equatable, Identifiable {
+enum HaloActivity: Equatable, Identifiable {
     case nowPlaying(NowPlayingActivity)
     case charging(ChargingActivity)
     case notification(NotificationActivity)
@@ -117,16 +117,16 @@ struct WeatherActivity: Equatable {
 
 // MARK: - Center
 
-final class IslandCenter: ObservableObject {
-    @Published var islands: [IslandActivity] = []
+final class HaloCenter: ObservableObject {
+    @Published var activities: [HaloActivity] = []
     @Published var expandedId: String?
     /// Latest battery fraction for pills that show it (focus trailing).
     @Published var batteryLevel: Double?
-    var deliver: ((IslandActivity) -> Void)?
+    var deliver: ((HaloActivity) -> Void)?
 
     /// Priority (higher = shows on top). Ambient order: music > focus >
     /// charging > weather. Transient notifications pin above — say so to change.
-    static func rank(of activity: IslandActivity) -> Int {
+    static func rank(of activity: HaloActivity) -> Int {
         switch activity {
         case .notification: return 4
         case .nowPlaying: return 3
@@ -162,8 +162,8 @@ final class IslandCenter: ObservableObject {
     /// wakeup 99% of the time.
     private func ensureTicking() {
         var needsTick = false
-        for island in islands {
-            if case let .nowPlaying(n) = island, n.isPlaying, n.duration > 0 {
+        for activity in activities {
+            if case let .nowPlaying(n) = activity, n.isPlaying, n.duration > 0 {
                 needsTick = true
                 break
             }
@@ -181,26 +181,26 @@ final class IslandCenter: ObservableObject {
     }
 
     /// Present an activity. Passive monitor refreshes must pass `expand: false`
-    /// so they never hijack the island; new user-visible events pass
+    /// so they never hijack the halo; new user-visible events pass
     /// `expand: true` with `collapseAfter` so the card opens, then settles
     /// back to its pill while the activity stays live.
-    func present(_ activity: IslandActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
+    func present(_ activity: HaloActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
         let idx: Int
-        if let existing = islands.firstIndex(where: { $0.id == activity.id }) {
-            islands[existing] = activity
+        if let existing = activities.firstIndex(where: { $0.id == activity.id }) {
+            activities[existing] = activity
             idx = existing
         } else {
             // Ordered insert: higher rank sits closer to the top (end).
-            let pos = islands.firstIndex { Self.rank(of: $0) > Self.rank(of: activity) } ?? islands.endIndex
-            islands.insert(activity, at: pos)
-            if islands.count > 4 { islands.removeFirst(islands.count - 4) }
+            let pos = activities.firstIndex { Self.rank(of: $0) > Self.rank(of: activity) } ?? activities.endIndex
+            activities.insert(activity, at: pos)
+            if activities.count > 4 { activities.removeFirst(activities.count - 4) }
             idx = pos
         }
         // Fresh nowPlaying cards carry no history (independent source);
         // re-attach the cached recents so the fallback rail survives.
-        if case var .nowPlaying(n) = islands[idx], n.recent.isEmpty, !latestRecent.isEmpty {
+        if case var .nowPlaying(n) = activities[idx], n.recent.isEmpty, !latestRecent.isEmpty {
             n.recent = latestRecent
-            islands[idx] = .nowPlaying(n)
+            activities[idx] = .nowPlaying(n)
         }
         if expand { expandedId = activity.id }
         autoDismissWorkItems[activity.id]?.cancel()
@@ -230,8 +230,8 @@ final class IslandCenter: ObservableObject {
         autoDismissWorkItems.removeValue(forKey: id)
         collapseWorkItems[id]?.cancel()
         collapseWorkItems.removeValue(forKey: id)
-        islands.removeAll { $0.id == id }
-        if expandedId == id { expandedId = islands.last?.id }
+        activities.removeAll { $0.id == id }
+        if expandedId == id { expandedId = activities.last?.id }
         ensureTicking()
     }
 
@@ -240,7 +240,7 @@ final class IslandCenter: ObservableObject {
         autoDismissWorkItems.removeAll()
         collapseWorkItems.values.forEach { $0.cancel() }
         collapseWorkItems.removeAll()
-        islands.removeAll()
+        activities.removeAll()
         expandedId = nil
         ensureTicking()
     }
@@ -251,15 +251,15 @@ final class IslandCenter: ObservableObject {
 
     /// Pin an activity to the top regardless of rank (plug-in override).
     func moveToTop(_ id: String) {
-        guard let idx = islands.firstIndex(where: { $0.id == id }) else { return }
-        let a = islands.remove(at: idx)
-        islands.append(a)
+        guard let idx = activities.firstIndex(where: { $0.id == id }) else { return }
+        let a = activities.remove(at: idx)
+        activities.append(a)
     }
 
     /// Restore rank order (stable: same-rank keeps current relative order).
     /// Used after a temporary override expires.
     func applyPriorityOrder() {
-        islands = islands.enumerated()
+        activities = activities.enumerated()
             .sorted {
                 let r0 = Self.rank(of: $0.element), r1 = Self.rank(of: $1.element)
                 if r0 != r1 { return r0 < r1 }
@@ -267,13 +267,13 @@ final class IslandCenter: ObservableObject {
             }
             .map(\.element)
         // If the expanded card is no longer on top, settle it to the top.
-        if let exp = expandedId, islands.last?.id != exp {
-            expandedId = islands.last?.id
+        if let exp = expandedId, activities.last?.id != exp {
+            expandedId = activities.last?.id
         }
     }
 
     func toggleExpandTop() {
-        guard let top = islands.last else { return }
+        guard let top = activities.last else { return }
         toggleExpand(top.id)
     }
 
@@ -285,19 +285,19 @@ final class IslandCenter: ObservableObject {
     /// Attach late-arriving artwork (e.g. downloaded URLs) without
     /// re-expanding or resetting the collapse timer.
     func updateNowPlayingArtwork(_ data: Data) {
-        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
-              case var .nowPlaying(n) = islands[idx] else { return }
+        guard let idx = activities.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = activities[idx] else { return }
         n.artworkData = data
-        islands[idx] = .nowPlaying(n)
+        activities[idx] = .nowPlaying(n)
     }
 
     /// Attach the Up Next queue silently (arrives after the card pops).
     func updateNowPlayingQueue(_ items: [UpNextItem]) {
-        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
-              case var .nowPlaying(n) = islands[idx] else { return }
+        guard let idx = activities.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = activities[idx] else { return }
         if n.upNext != items {
             n.upNext = items
-            islands[idx] = .nowPlaying(n)
+            activities[idx] = .nowPlaying(n)
         }
     }
 
@@ -313,28 +313,28 @@ final class IslandCenter: ObservableObject {
     }
 
     private func applyRecentToCard(_ tracks: [PlaybackHistoryMonitor.Track]) {
-        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
-              case var .nowPlaying(n) = islands[idx] else { return }
+        guard let idx = activities.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = activities[idx] else { return }
         // The newest archive often IS the current track — drop it so the
         // rail only shows what came before the card's song.
         let filtered = tracks.filter { $0.title != n.title }
         if n.recent != filtered {
             n.recent = filtered
-            islands[idx] = .nowPlaying(n)
+            activities[idx] = .nowPlaying(n)
         }
     }
 
     /// Silent progress correction from the monitor (3s poll). Updates the
-    /// island's copy in place — never expands, never hijacks.
+    /// halo's copy in place — never expands, never hijacks.
     func updateNowPlayingProgress(elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool) {
-        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
-              case var .nowPlaying(n) = islands[idx] else { return }
+        guard let idx = activities.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = activities[idx] else { return }
         // Ignore tiny jitter so the 1Hz local tick stays smooth.
         if abs(n.elapsed - elapsed) < 1.5 && n.duration == duration && n.isPlaying == isPlaying { return }
         n.elapsed = elapsed
         n.duration = duration
         n.isPlaying = isPlaying
-        islands[idx] = .nowPlaying(n)
+        activities[idx] = .nowPlaying(n)
         ensureTicking()
     }
 
@@ -346,14 +346,14 @@ final class IslandCenter: ObservableObject {
     }
 
     private func tick() {
-        for idx in islands.indices {
-            if case var .nowPlaying(n) = islands[idx], n.isPlaying, n.duration > 0 {
+        for idx in activities.indices {
+            if case var .nowPlaying(n) = activities[idx], n.isPlaying, n.duration > 0 {
                 // Local 1Hz interpolation so seconds + bar move smoothly
                 // between the monitor's 3s corrections.
                 let next = min(n.duration, n.elapsed + 1)
                 if next != n.elapsed {
                     n.elapsed = next
-                    islands[idx] = .nowPlaying(n)
+                    activities[idx] = .nowPlaying(n)
                 }
             }
         }
@@ -362,10 +362,10 @@ final class IslandCenter: ObservableObject {
 
 // MARK: - Window controller
 
-final class IslandWindowController: NSObject {
+final class HaloWindowController: NSObject {
     private var window: NSPanel?
-    let center = IslandCenter()
-    var actions = IslandActions()
+    let center = HaloCenter()
+    var actions = HaloActions()
     private var hoverWork: DispatchWorkItem?
     private var hoverOpenedId: String?
     private var hoverTimer: Timer?
@@ -388,12 +388,12 @@ final class IslandWindowController: NSObject {
         guard let window else { return nil }
         let f = window.frame
         let isOpen: Bool = {
-            if let id = center.expandedId, center.islands.contains(where: { $0.id == id }) { return true }
+            if let id = center.expandedId, center.activities.contains(where: { $0.id == id }) { return true }
             return false
         }()
-        let closedW = islandClosedWidth()
-        let w: CGFloat = isOpen ? islandOpenSize.width : (center.islands.isEmpty ? closedW : closedW + 60)
-        let h: CGFloat = isOpen ? islandOpenSize.height : islandClosedHeight
+        let closedW = haloClosedWidth()
+        let w: CGFloat = isOpen ? haloOpenSize.width : (center.activities.isEmpty ? closedW : closedW + 60)
+        let h: CGFloat = isOpen ? haloOpenSize.height : haloClosedHeight
         // Content is top-center anchored in the fixed window.
         let x = f.midX - w / 2
         let y = f.maxY - h
@@ -412,13 +412,13 @@ final class IslandWindowController: NSObject {
 
     func install(contextMenu: NSMenu? = nil) {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: islandWindowSize.width, height: islandWindowSize.height),
+            contentRect: NSRect(x: 0, y: 0, width: haloWindowSize.width, height: haloWindowSize.height),
             styleMask: [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow],
             backing: .buffered,
             defer: false
         )
-        panel.title = "Alcove"
-        // Above the menu bar but below screen-lock UI, like the reference.
+        panel.title = "Halo"
+        // Above the menu bar but below screen-lock UI.
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
@@ -430,16 +430,16 @@ final class IslandWindowController: NSObject {
         panel.isReleasedWhenClosed = false
         panel.appearance = NSAppearance(named: .darkAqua)
 
-        let host = NSHostingView(rootView: IslandView(center: center, actions: actions))
+        let host = NSHostingView(rootView: HaloView(center: center, actions: actions))
         host.autoresizingMask = [.width, .height]
         host.translatesAutoresizingMaskIntoConstraints = true
-        host.frame = NSRect(x: 0, y: 0, width: islandWindowSize.width, height: islandWindowSize.height)
+        host.frame = NSRect(x: 0, y: 0, width: haloWindowSize.width, height: haloWindowSize.height)
         host.wantsLayer = true
         host.layer?.backgroundColor = .clear
         panel.contentView = host
         host.menu = contextMenu
 
-        positionInNotch(panel, width: islandWindowSize.width, height: islandWindowSize.height)
+        positionAtTopSurface(panel, width: haloWindowSize.width, height: haloWindowSize.height)
         panel.orderFrontRegardless()
         window = panel
         updateEventRouting()
@@ -457,12 +457,12 @@ final class IslandWindowController: NSObject {
                 object: nil, queue: .main
             ) { [weak self] _ in
                 guard let self, let window = self.window else { return }
-                self.positionInNotch(window, width: islandWindowSize.width, height: islandWindowSize.height)
+                self.positionAtTopSurface(window, width: haloWindowSize.width, height: haloWindowSize.height)
                 self.updateEventRouting()
             }
         }
 
-        // 10Hz hover poll: mouse events are unreliable inside the notch
+        // 10Hz hover poll: mouse events are unreliable inside the top surface
         // dead-zone, so hit-test the cursor position directly. Doubles as
         // the routing backstop (card opening under a parked cursor).
         hoverTimer?.invalidate()
@@ -471,7 +471,7 @@ final class IslandWindowController: NSObject {
         }
     }
 
-    func show(_ activity: IslandActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
+    func show(_ activity: HaloActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
         center.present(activity, autoDismissAfter: seconds, expand: expand, collapseAfter: collapse)
         // A fresh card under a parked cursor must still take clicks.
         updateEventRouting()
@@ -492,12 +492,12 @@ final class IslandWindowController: NSObject {
         if pollCount % 10 == 1 {
             let onAnyScreen = NSScreen.screens.contains { $0.frame.intersects(window.frame) }
             if !onAnyScreen {
-                positionInNotch(window, width: islandWindowSize.width, height: islandWindowSize.height)
+                positionAtTopSurface(window, width: haloWindowSize.width, height: haloWindowSize.height)
                 return
             }
         }
         // No activities: nothing to hover-open. Skip mouseLocation work.
-        if center.islands.isEmpty { return }
+        if center.activities.isEmpty { return }
         // Motion history (1s window): hover-open must come from the cursor
         // moving onto the pill — never from geometry changing under a
         // parked cursor (e.g. the pill elongating as a song starts).
@@ -517,16 +517,16 @@ final class IslandWindowController: NSObject {
     private func hoverEntered() {
         hoverWork?.cancel()
         hoverWork = nil
-        guard !center.islands.isEmpty, center.expandedId == nil else { return }
+        guard !center.activities.isEmpty, center.expandedId == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             let loc = NSEvent.mouseLocation
             let inHit = self.visibleContentRect().map { $0.contains(loc) } ?? false
             let moved = self.mouseMovedRecently(threshold: 4)
             guard self.center.expandedId == nil,
-                  let top = self.center.islands.last,
+                  let top = self.center.activities.last,
                   inHit, moved else { return }
-            NSLog("[Alcove] ui: hover-open %@", top.id)
+            NSLog("[Halo] ui: hover-open %@", top.id)
             self.hoverOpenedId = top.id
             self.center.expandedId = top.id
             self.updateEventRouting()
@@ -551,7 +551,7 @@ final class IslandWindowController: NSObject {
     private func hoverExited() {
         hoverWork?.cancel()
         hoverWork = nil
-        // Hover-away always settles the island: whatever is expanded
+        // Hover-away always settles the halo: whatever is expanded
         // collapses shortly after the mouse leaves (re-enter cancels).
         // Track-change cards additionally settle on their own 3s timer.
         guard let id = center.expandedId else { return }
@@ -564,7 +564,7 @@ final class IslandWindowController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
-    private func notchInfo() -> (minX: CGFloat, maxX: CGFloat, menuBarHeight: CGFloat)? {
+    private func topSurfaceInfo() -> (minX: CGFloat, maxX: CGFloat, menuBarHeight: CGFloat)? {
         guard let screen = NSScreen.main else { return nil }
         let frame = screen.frame
         let visible = screen.visibleFrame
@@ -578,21 +578,21 @@ final class IslandWindowController: NSObject {
         return (visible.minX, visible.maxX, menuBarHeight)
     }
 
-    private func positionInNotch(_ panel: NSPanel, width: CGFloat, height: CGFloat) {
-        guard let notch = notchInfo(), let screen = NSScreen.main else { return }
+    private func positionAtTopSurface(_ panel: NSPanel, width: CGFloat, height: CGFloat) {
+        guard let topSurface = topSurfaceInfo(), let screen = NSScreen.main else { return }
         let frame = screen.frame
-        let o = Self.islandOrigin(width: Double(width), height: Double(height),
+        let o = Self.haloOrigin(width: Double(width), height: Double(height),
                                   screenMidX: Double(frame.midX),
-                                  menuBarHeight: Double(notch.menuBarHeight),
+                                  menuBarHeight: Double(topSurface.menuBarHeight),
                                   screenMaxY: Double(frame.maxY))
         panel.setFrame(NSRect(x: o.x, y: o.y, width: width, height: height), display: true)
     }
 
     /// Pure positioning math: always centered on the screen axis with the top
-    /// edge pinned to the screen top. One center for every size — the island
+    /// edge pinned to the screen top. One center for every size — the halo
     /// can grow/shrink but its center mathematically cannot move.
     /// Separated for unit testing.
-    static func islandOrigin(width w: Double, height h: Double,
+    static func haloOrigin(width w: Double, height h: Double,
                              screenMidX: Double, menuBarHeight: Double,
                              screenMaxY: Double) -> CGPoint {
         let x = screenMidX - w / 2
@@ -603,9 +603,9 @@ final class IslandWindowController: NSObject {
 
 // MARK: - SwiftUI view
 
-/// Actions reachable from the island's right-click menu.
+/// Actions reachable from the halo's right-click menu.
 /// Wired by the app delegate; default no-ops keep previews/tests safe.
-struct IslandActions {
+struct HaloActions {
     var showNowPlaying: () -> Void = {}
     var showCharging: () -> Void = {}
     var showNotification: () -> Void = {}
@@ -622,28 +622,28 @@ struct IslandActions {
     var quit: () -> Void = {}
 }
 
-struct IslandView: View {
-    @ObservedObject var center: IslandCenter
-    var actions: IslandActions = IslandActions()
+struct HaloView: View {
+    @ObservedObject var center: HaloCenter
+    var actions: HaloActions = HaloActions()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    // Apple-accurate Dynamic Island dimensions.
-    // Closed hugs the camera housing (dynamic, ~185pt on 14"); open is wide.
-    private var notchPillWidth: CGFloat { islandClosedWidth() }
-    private let notchPillHeight: CGFloat = 32
-    private var expandedWidth: CGFloat { islandOpenSize.width }
-    private var expandedHeight: CGFloat { islandOpenSize.height }
+    // Halo top-surface dimensions tuned for the built-in display.
+    // Closed hugs the camera housing (~185pt on 14-inch displays); open is wide.
+    private var topSurfacePillWidth: CGFloat { haloClosedWidth() }
+    private let topSurfacePillHeight: CGFloat = 32
+    private var expandedWidth: CGFloat { haloOpenSize.width }
+    private var expandedHeight: CGFloat { haloOpenSize.height }
 
     private var isOpen: Bool {
-        if let id = center.expandedId, center.islands.contains(where: { $0.id == id }) { return true }
+        if let id = center.expandedId, center.activities.contains(where: { $0.id == id }) { return true }
         return false
     }
 
     private var openSpring: Animation {
-        .spring(response: islandOpenResponse, dampingFraction: islandOpenDamping, blendDuration: 0)
+        .spring(response: haloOpenResponse, dampingFraction: haloOpenDamping, blendDuration: 0)
     }
     private var closeSpring: Animation {
-        .spring(response: islandCloseResponse, dampingFraction: islandCloseDamping, blendDuration: 0)
+        .spring(response: haloCloseResponse, dampingFraction: haloCloseDamping, blendDuration: 0)
     }
     private var morphSpring: Animation { isOpen ? openSpring : closeSpring }
 
@@ -651,15 +651,15 @@ struct IslandView: View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
                 // Opaque black pill — no blur/material, no outer stroke.
-                NotchShape(topRadius: backdropTop, bottomRadius: backdropBottom)
+                HaloSurfaceShape(topRadius: backdropTop, bottomRadius: backdropBottom)
                     .fill(Color.black)
 
                 Group {
-                    if center.islands.isEmpty {
+                    if center.activities.isEmpty {
                         idleContent
                             .transition(contentSwap)
                     } else if let id = center.expandedId,
-                              let activity = center.islands.first(where: { $0.id == id }) {
+                              let activity = center.activities.first(where: { $0.id == id }) {
                         expandedContent(for: activity)
                             .transition(openContentTransition)
                     } else {
@@ -676,14 +676,14 @@ struct IslandView: View {
                     .frame(height: 1)
                     .padding(.horizontal, backdropTop)
             }
-            .clipShape(NotchShape(topRadius: backdropTop, bottomRadius: backdropBottom))
+            .clipShape(HaloSurfaceShape(topRadius: backdropTop, bottomRadius: backdropBottom))
             .shadow(color: isOpen ? .black.opacity(0.7) : .clear,
                     radius: 6, x: 0, y: 0)
             // Inner breathing room when open, edge-to-edge when closed.
             .padding(.horizontal, isOpen ? 0 : 0)
             .padding([.horizontal, .bottom], isOpen ? 12 : 0)
             .background(Color.black)
-            .clipShape(NotchShape(topRadius: backdropTop, bottomRadius: backdropBottom))
+            .clipShape(HaloSurfaceShape(topRadius: backdropTop, bottomRadius: backdropBottom))
             .shadow(color: isOpen ? .black.opacity(0.7) : .clear, radius: 6)
         }
         .padding(.bottom, 8)
@@ -691,10 +691,10 @@ struct IslandView: View {
         // this frame is pure layout with no feedback loop.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .compositingGroup()
-        // The whole island is hittable (clicks, right-click menu) — without
+        // The whole halo is hittable (clicks, right-click menu) — without
         // this, transparent regions (spacers, padding) let clicks fall
-        // through to whatever is behind the island.
-        .contentShape(NotchShape(topRadius: backdropTop, bottomRadius: backdropBottom))
+        // through to whatever is behind the haloController.
+        .contentShape(HaloSurfaceShape(topRadius: backdropTop, bottomRadius: backdropBottom))
         .contextMenu {
             Button("Now Playing") { actions.showNowPlaying() }
             Button("Charging") { actions.showCharging() }
@@ -712,25 +712,25 @@ struct IslandView: View {
             Button("Dismiss All") { actions.dismissAll() }
             Divider()
             Button("Settings…") { actions.openSettings() }
-            Button("Quit Alcove") { actions.quit() }
+            Button("Quit Halo") { actions.quit() }
         }
         .preferredColorScheme(.dark)
-        // Bouncy open, critically-damped close — matches the reference feel.
+        // Bouncy open, critically damped close.
         .animation(morphSpring, value: center.expandedId)
-        .animation(.smooth, value: center.islands.count)
+        .animation(.smooth, value: center.activities.count)
     }
 
     private var preferredWidth: CGFloat {
         if isOpen { return expandedWidth }
-        if center.islands.isEmpty { return notchPillWidth }
-        // Elongated pill while live: the notch visibly stretches the
+        if center.activities.isEmpty { return topSurfacePillWidth }
+        // Elongated pill while live: the topSurface visibly stretches the
         // moment a song starts (~185 -> ~245), then morphs to the card.
-        return notchPillWidth + 60
+        return topSurfacePillWidth + 60
     }
 
     private var preferredHeight: CGFloat {
         if isOpen { return expandedHeight }
-        return notchPillHeight
+        return topSurfacePillHeight
     }
 
     /// Fast content crossfade. The backdrop morphs at spring speed while
@@ -744,8 +744,8 @@ struct IslandView: View {
             .animation(.smooth(duration: 0.35))
     }
 
-    private var backdropTop: CGFloat { isOpen ? islandRadiiOpen.top : islandRadiiClosed.top }
-    private var backdropBottom: CGFloat { isOpen ? islandRadiiOpen.bottom : islandRadiiClosed.bottom }
+    private var backdropTop: CGFloat { isOpen ? haloRadiiOpen.top : haloRadiiClosed.top }
+    private var backdropBottom: CGFloat { isOpen ? haloRadiiOpen.bottom : haloRadiiClosed.bottom }
 
     // MARK: Idle
 
@@ -754,31 +754,31 @@ struct IslandView: View {
             Image(systemName: "circle.dashed.inset.filled")
                 .foregroundColor(.white.opacity(0.9))
                 .font(.system(size: 11, weight: .semibold))
-            Text("Alcove")
+            Text("Halo")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.9))
         }
-        .frame(width: notchPillWidth - 20, height: islandClosedHeight)
+        .frame(width: topSurfacePillWidth - 20, height: haloClosedHeight)
     }
 
-    // MARK: Stack — single inline pill like the reference closed notch
+    // MARK: Stack — single inline pill in collapsed mode
 
     private var collapsedInlineView: some View {
         HStack(spacing: 8) {
             // Both sides reflect the TOP activity (same one tap-to-expand
             // opens). Mixing first/last shows e.g. music art with a
             // battery % when several activities are live.
-            if let top = center.islands.last {
+            if let top = center.activities.last {
                 inlineLeading(for: top)
                 Spacer(minLength: 0)
                 inlineTrailing(for: top)
             }
         }
         .padding(.horizontal, 10)
-        .frame(width: notchPillWidth + 60, height: islandClosedHeight)
+        .frame(width: topSurfacePillWidth + 60, height: haloClosedHeight)
         .contentShape(Rectangle())
         .onTapGesture {
-            if let top = center.islands.last { center.toggleExpand(top.id) }
+            if let top = center.activities.last { center.toggleExpand(top.id) }
         }
     }
 
@@ -803,7 +803,7 @@ struct IslandView: View {
     }
 
     @ViewBuilder
-    private func inlineLeading(for activity: IslandActivity) -> some View {
+    private func inlineLeading(for activity: HaloActivity) -> some View {
         switch activity {
         case .nowPlaying(let n):
             if let data = n.artworkData, let img = NSImage(data: data) {
@@ -828,7 +828,7 @@ struct IslandView: View {
     }
 
     @ViewBuilder
-    private func inlineTrailing(for activity: IslandActivity) -> some View {
+    private func inlineTrailing(for activity: HaloActivity) -> some View {
         switch activity {
         case .nowPlaying(let n):
             SpectrumBars(playing: n.isPlaying)
@@ -871,7 +871,7 @@ struct IslandView: View {
         .frame(width: size, height: size)
     }
 
-    private func inlineDot(for activity: IslandActivity) -> some View {
+    private func inlineDot(for activity: HaloActivity) -> some View {
         // Real app icon wins over the generic dot (notifications).
         if case .notification(let n) = activity,
            let data = n.appIconData, let img = NSImage(data: data) {
@@ -893,7 +893,7 @@ struct IslandView: View {
         .frame(width: 20, height: 20))
     }
 
-    private func smallSplitPill(for activity: IslandActivity) -> some View {
+    private func smallSplitPill(for activity: HaloActivity) -> some View {
         inlineDot(for: activity)
     }
 
@@ -901,10 +901,10 @@ struct IslandView: View {
 
     // MARK: Expanded
 
-    private func expandedContent(for activity: IslandActivity) -> some View {
+    private func expandedContent(for activity: HaloActivity) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header(for: activity)
-                .frame(height: max(24, islandClosedHeight))
+                .frame(height: max(24, haloClosedHeight))
             content(for: activity)
                 .padding(.top, 10)
             Spacer(minLength: 0)
@@ -915,7 +915,7 @@ struct IslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func header(for activity: IslandActivity) -> some View {
+    private func header(for activity: HaloActivity) -> some View {
         HStack(alignment: .center, spacing: 8) {
             icon(for: activity, size: 26)
             Text(title(for: activity))
@@ -932,7 +932,7 @@ struct IslandView: View {
     }
 
     @ViewBuilder
-    private func content(for activity: IslandActivity) -> some View {
+    private func content(for activity: HaloActivity) -> some View {
         switch activity {
         case .nowPlaying(let n): NowPlayingExpandedView(
             activity: n,
@@ -946,7 +946,7 @@ struct IslandView: View {
             },
             onPlayQueued: { center.onPlayQueued?($0) },
             onReplay: { [weak center] track in
-                NSLog("[Alcove] ui: replay tapped: %@", track.title)
+                NSLog("[Halo] ui: replay tapped: %@", track.title)
                 center?.onReplayRecent?(track)
             }
         )
@@ -960,7 +960,7 @@ struct IslandView: View {
     // MARK: Shared
 
     @ViewBuilder
-    private func icon(for activity: IslandActivity, size: CGFloat) -> some View {
+    private func icon(for activity: HaloActivity, size: CGFloat) -> some View {
         if case .nowPlaying(let n) = activity, let img = playerAppIcon(for: n.appName, size: size) {
             img
         } else if case .focus(let f) = activity, !FocusMonitor.isSFSymbol(f.symbol) {
@@ -986,7 +986,7 @@ struct IslandView: View {
         }
     }
 
-    private func iconSpec(for activity: IslandActivity) -> (String, Color) {
+    private func iconSpec(for activity: HaloActivity) -> (String, Color) {
         switch activity {
         case .nowPlaying: return ("music.note", .pink)
         case .charging: return ("bolt.fill", .green)
@@ -996,7 +996,7 @@ struct IslandView: View {
         }
     }
 
-    private func title(for activity: IslandActivity) -> String {
+    private func title(for activity: HaloActivity) -> String {
         switch activity {
         case .nowPlaying: return "Now Playing"
         case .charging: return "Battery"
@@ -1007,7 +1007,7 @@ struct IslandView: View {
     }
 
     @ViewBuilder
-    private func text(for activity: IslandActivity, expanded: Bool, size: CGFloat) -> some View {
+    private func text(for activity: HaloActivity, expanded: Bool, size: CGFloat) -> some View {
         switch activity {
         case .nowPlaying(let n): Text(n.title).font(.system(size: size, weight: .semibold))
         case .charging(let c): Text(expanded ? "Charging" : "\(Int((c.level * 100).rounded()))%").font(.system(size: size, weight: .semibold))
@@ -1070,7 +1070,7 @@ struct NowPlayingExpandedView: View {
                         SeekBar(progress: shownProgress, tint: .red,
                                 onScrub: { f in dragFraction = f },
                                 onRelease: { f in
-                                    NSLog("[Alcove] ui: seek to %.1fs", f * activity.duration)
+                                    NSLog("[Halo] ui: seek to %.1fs", f * activity.duration)
                                     onSeek(f * activity.duration)
                                     dragFraction = nil
                                 })
@@ -1082,15 +1082,15 @@ struct NowPlayingExpandedView: View {
                 }
                 HStack(spacing: 18) {
                     TransportButton(systemImage: "backward.fill", size: 13) {
-                        NSLog("[Alcove] ui: previous tapped")
+                        NSLog("[Halo] ui: previous tapped")
                         onPrevious()
                     }
                     TransportButton(systemImage: activity.isPlaying ? "pause.fill" : "play.fill", size: 15, prominent: true) {
-                        NSLog("[Alcove] ui: playpause tapped")
+                        NSLog("[Halo] ui: playpause tapped")
                         onPlayPause()
                     }
                     TransportButton(systemImage: "forward.fill", size: 13) {
-                        NSLog("[Alcove] ui: next tapped")
+                        NSLog("[Halo] ui: next tapped")
                         onNext()
                     }
                 }
@@ -1157,7 +1157,7 @@ struct NowPlayingExpandedView: View {
                     .padding(.bottom, 8)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        NSLog("[Alcove] ui: queue tap %@", item.title)
+                        NSLog("[Halo] ui: queue tap %@", item.title)
                         onPlayQueued(item)
                     }
                 }
@@ -1583,8 +1583,8 @@ struct BatteryRing: View {
 
 /// Camera-housing profile: nearly square top edge, fully round bottom.
 /// Top and bottom radii interpolate, so the pill <-> card morph is smooth.
-/// Same geometry family as the reference notch apps (6/14 closed, 19/24 open).
-struct NotchShape: Shape {
+/// Shared geometry for collapsed and expanded Halo surfaces (6/14 closed, 19/24 open).
+struct HaloSurfaceShape: Shape {
     var topRadius: CGFloat
     var bottomRadius: CGFloat
 

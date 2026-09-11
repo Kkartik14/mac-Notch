@@ -1,6 +1,6 @@
-# Alcove
+# Halo
 
-Alcove is a native macOS 14 app that provides a Dynamic-Island-style activity surface at the top of the screen. It is a small, accessory-style Swift application: the island is the main UI, and there is intentionally no Dock or menu-bar status item.
+Halo is a native macOS 14 app that provides a compact live activity surface at the top of the screen. It is a small, accessory-style Swift application: the Halo surface is the main UI, and there is intentionally no Dock or menu-bar status item.
 
 The current implementation is a development snapshot. It reads local macOS and media-app state, renders live activity cards, and provides playback controls, but it is not yet a signed, notarized, or production-distribution build.
 
@@ -31,10 +31,10 @@ From the repository root:
 ~~~bash
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ./bundle.sh
-open Alcove.app
+open Halo.app
 ~~~
 
-The script performs a release build and creates Alcove.app at the repository root. The generated app bundle is ignored by Git. For a debug build, use:
+The script performs a release build and creates Halo.app at the repository root. The generated app bundle is ignored by Git. For a debug build, use:
 
 ~~~bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build
@@ -58,7 +58,7 @@ The tests cover activity-stack behavior, fixed-window positioning, priority orde
 
 ## Runtime behavior
 
-The app starts with an idle Alcove pill. Monitors then update a shared activity stack. The highest-priority activity is shown in the collapsed pill:
+The app starts with an idle Halo pill. Monitors then update a shared activity stack. The highest-priority activity is shown in the collapsed pill:
 
 ~~~text
 Notification → Now Playing → Focus → Charging → Weather
@@ -70,13 +70,13 @@ The collapsed pill can be clicked to open the top activity. Hover-open requires 
 
 ## Music and recently played behavior
 
-Music is read through AppleScript because direct MediaRemote reads are unreliable for Apple Music on recent macOS versions. On a track change Alcove reads the title, artist, album, player state, position, duration, and artwork. It then tries to resolve the next three tracks:
+Music is read through AppleScript because direct MediaRemote reads are unreliable for Apple Music on recent macOS versions. On a track change Halo reads the title, artist, album, player state, position, duration, and artwork. It then tries to resolve the next three tracks:
 
 1. The current playlist, verified against the current track.
 2. Music's library playlist, also verified.
 3. No scripting queue for catalog/radio contexts.
 
-For catalog contexts, Alcove uses Music playback-session archives to recover the true queue order. It resolves store IDs through the public iTunes Lookup API, downloads small artwork thumbnails, and protects the visible card from stale session contexts.
+For catalog contexts, Halo uses Music playback-session archives to recover the true queue order. It resolves store IDs through the public iTunes Lookup API, downloads small artwork thumbnails, and protects the visible card from stale session contexts.
 
 An Up Next playlist row is played directly through Music using its playlist persistent ID and track index. A catalog row cannot be addressed reliably by AppleScript, so it opens a music:// track URL instead. If no queue is available, the card shows a recently-played rail from Music's session archives. Tapping a recent track opens its music:// URL when one was recorded.
 
@@ -90,27 +90,27 @@ Some capabilities depend on macOS TCC permissions:
 - Location access for location-based weather.
 - Full Disk Access for live Focus state and the notification store.
 
-Alcove does not run a backend or maintain its own database. It stores runtime state in memory, reads selected local macOS/media files, sends coordinates to Open-Meteo, and sends Music store IDs to the iTunes Lookup API when resolving queue metadata. See docs/permissions.md.
+Halo does not run a backend or maintain its own database. It stores runtime state in memory, reads selected local macOS/media files, sends coordinates to Open-Meteo, and sends Music store IDs to the iTunes Lookup API when resolving queue metadata. See docs/permissions.md.
 
 ## Repository map
 
 | Path | Purpose |
 | --- | --- |
 | Package.swift | macOS 14 Swift Package Manager manifest and framework links. |
-| Sources/Alcove/App.swift | Application startup, monitor wiring, command routing, and context menu. |
-| Sources/Alcove/Island.swift | Activity models, state center, window controller, animations, and SwiftUI views. |
-| Sources/Alcove/MusicAppMonitor.swift | Apple Music AppleScript integration and playlist queue parsing. |
-| Sources/Alcove/SpotifyMonitor.swift | Spotify AppleScript integration and artwork download. |
-| Sources/Alcove/NowPlayingMonitor.swift | Dynamic bridge to the private MediaRemote framework. |
-| Sources/Alcove/PlaybackHistoryMonitor.swift | Music playback-session archive, queue, metadata, and artwork handling. |
-| Sources/Alcove/BatteryMonitor.swift | IOKit power-source monitor. |
-| Sources/Alcove/WeatherMonitor.swift | CoreLocation/Open-Meteo weather monitor. |
-| Sources/Alcove/FocusMonitor.swift | Focus database reader and mode/icon decoder. |
-| Sources/Alcove/NotificationMonitor.swift | Read-only SQLite notification-store adapter. |
-| Sources/Alcove/SettingsRootView.swift | Current minimal Settings window. |
-| Tests/AlcoveTests/AlcoveTests.swift | Unit and lightweight host integration tests. |
+| Sources/Halo/App.swift | Application startup, monitor wiring, command routing, and context menu. |
+| Sources/Halo/Halo.swift | Activity models, state center, window controller, animations, and SwiftUI views. |
+| Sources/Halo/MusicAppMonitor.swift | Apple Music AppleScript integration and playlist queue parsing. |
+| Sources/Halo/SpotifyMonitor.swift | Spotify AppleScript integration and artwork download. |
+| Sources/Halo/NowPlayingMonitor.swift | Runtime bridge to the private MediaRemote framework. |
+| Sources/Halo/PlaybackHistoryMonitor.swift | Music playback-session archive, queue, metadata, and artwork handling. |
+| Sources/Halo/BatteryMonitor.swift | IOKit power-source monitor. |
+| Sources/Halo/WeatherMonitor.swift | CoreLocation/Open-Meteo weather monitor. |
+| Sources/Halo/FocusMonitor.swift | Focus database reader and mode/icon decoder. |
+| Sources/Halo/NotificationMonitor.swift | Read-only SQLite notification-store adapter. |
+| Sources/Halo/SettingsRootView.swift | Current minimal Settings window. |
+| Tests/HaloTests/HaloTests.swift | Unit and lightweight host integration tests. |
 | bundle.sh | Release build and unsigned app-bundle creation. |
-| Alcove.entitlements / Sources/Alcove/Resources/Info.plist | Runtime entitlements and bundle metadata. |
+| Halo.entitlements / Sources/Halo/Resources/Info.plist | Runtime entitlements and bundle metadata. |
 
 ## Known limitations
 

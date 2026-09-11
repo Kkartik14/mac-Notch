@@ -2,7 +2,7 @@
 
 ## Overview
 
-Alcove is organized as a set of source-specific monitors feeding one in-memory activity coordinator:
+Halo is organized as a set of source-specific monitors feeding one in-memory activity coordinator:
 
 ~~~text
 macOS / Music / Spotify / network
@@ -11,29 +11,29 @@ macOS / Music / Spotify / network
              ↓ callbacks
          AppDelegate
              ↓
-        IslandCenter
+        HaloCenter
              ↓ @Published state
-       IslandWindowController
+       HaloWindowController
              ↓
-          IslandView
+          HaloView
 ~~~
 
-The main application is defined in [Sources/Alcove/App.swift](../Sources/Alcove/App.swift). The visual and state layer is concentrated in [Sources/Alcove/Island.swift](../Sources/Alcove/Island.swift).
+The main application is defined in [Sources/Halo/App.swift](../Sources/Halo/App.swift). The visual and state layer is concentrated in [Sources/Halo/Halo.swift](../Sources/Halo/Halo.swift).
 
 ## Application startup
 
-1. AlcoveApp exposes a SwiftUI Settings scene.
+1. HaloApp exposes a SwiftUI Settings scene.
 2. AppDelegate.applicationDidFinishLaunching sets the app to accessory mode.
-3. IslandWindowController.install creates a borderless, non-activating NSPanel.
+3. HaloWindowController.install creates a borderless, non-activating NSPanel.
 4. The panel is placed on the main screen and kept at a fixed 660×210 size.
 5. A right-click menu is attached to the host view.
 6. startMonitors connects callbacks and starts every monitor.
 
-The app intentionally has no NSStatusItem. The island itself is the visible app surface.
+The app intentionally has no NSStatusItem. The halo itself is the visible app surface.
 
 ## Activity state
 
-IslandActivity has five cases:
+HaloActivity has five cases:
 
 - nowPlaying
 - charging
@@ -41,7 +41,7 @@ IslandActivity has five cases:
 - focus
 - weather
 
-Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. IslandCenter.islands stores up to four activities. The array is ordered from lowest to highest priority; the last element is the activity shown in the collapsed pill.
+Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. HaloCenter.activities stores up to four activities. The array is ordered from lowest to highest priority; the last element is the activity shown in the collapsed pill.
 
 The current ranks are:
 
@@ -55,7 +55,7 @@ The current ranks are:
 
 Only one activity can be expanded at a time through expandedId. present can update, expand, schedule auto-dismiss, and schedule a later collapse. collapse keeps the activity alive; dismiss removes it.
 
-IslandCenter also owns:
+HaloCenter also owns:
 
 - Playback progress interpolation at 1 Hz while a track is playing.
 - Cached recent tracks so a new Now Playing value does not lose the recent rail.
@@ -66,7 +66,7 @@ IslandCenter also owns:
 
 The window controller uses a fixed transparent glass panel. SwiftUI changes only the content width, height, shape radii, and content transitions. This prevents the window itself from sliding during a pill-to-card morph.
 
-The visible shape is top-center anchored. islandOrigin keeps the horizontal center constant and pins the top edge to the screen. A screen-parameter notification repositions the panel when displays or fullscreen geometry change.
+The visible shape is top-center anchored. haloOrigin keeps the horizontal center constant and pins the top edge to the screen. A screen-parameter notification repositions the panel when displays or fullscreen geometry change.
 
 Input routing has two layers:
 
@@ -79,17 +79,17 @@ The window is interactive only over the visible shape. Transparent regions pass 
 
 ### Music
 
-[MusicAppMonitor](../Sources/Alcove/MusicAppMonitor.swift) polls Music every three seconds. AppleScript returns a delimiter-separated snapshot containing title, artist, album, player state, position, and duration. Track changes fetch artwork and trigger a visible update; same-track polls update progress silently.
+[MusicAppMonitor](../Sources/Halo/MusicAppMonitor.swift) polls Music every three seconds. AppleScript returns a delimiter-separated snapshot containing title, artist, album, player state, position, and duration. Track changes fetch artwork and trigger a visible update; same-track polls update progress silently.
 
 The queue reader performs bounded neighbor reads rather than enumerating an entire library. It verifies that the reported index resolves to the current track before trusting a playlist context.
 
 ### Spotify
 
-[SpotifyMonitor](../Sources/Alcove/SpotifyMonitor.swift) follows the same polling pattern. Spotify reports duration in milliseconds and position in seconds, so duration is normalized before it reaches the UI. Artwork is downloaded asynchronously and applied only if the track signature is still current.
+[SpotifyMonitor](../Sources/Halo/SpotifyMonitor.swift) follows the same polling pattern. Spotify reports duration in milliseconds and position in seconds, so duration is normalized before it reaches the UI. Artwork is downloaded asynchronously and applied only if the track signature is still current.
 
 ### Generic MediaRemote
 
-[NowPlayingMonitor](../Sources/Alcove/NowPlayingMonitor.swift) loads the private MediaRemote framework with dlopen/dlsym. Missing symbols are treated as a no-op. It reads title, artist, album, playback rate, progress, client identifier, and artwork. MediaRemote is the generic fallback; Music and Spotify have dedicated scripting adapters because direct reads can return no data for those apps.
+[NowPlayingMonitor](../Sources/Halo/NowPlayingMonitor.swift) loads the private MediaRemote framework with dlopen/dlsym. Missing symbols are treated as a no-op. It reads title, artist, album, playback rate, progress, client identifier, and artwork. MediaRemote is the generic fallback; Music and Spotify have dedicated scripting adapters because direct reads can return no data for those apps.
 
 ### Transport routing
 
@@ -97,7 +97,7 @@ AppDelegate sends play/pause, next, and previous to the player currently playing
 
 ### Playback history and queue precedence
 
-[PlaybackHistoryMonitor](../Sources/Alcove/PlaybackHistoryMonitor.swift) watches Music's PlaybackSessions directory and polls it every ten seconds as a backstop. It parses:
+[PlaybackHistoryMonitor](../Sources/Halo/PlaybackHistoryMonitor.swift) watches Music's PlaybackSessions directory and polls it every ten seconds as a backstop. It parses:
 
 - contentItem.protobuf.gz for title and artist.
 - itemPayload.opackCoder.gz for store ID, catalog URL, and artwork template.
@@ -115,19 +115,19 @@ If no queue is available, the UI uses the recent-track list. Queue rows with pla
 
 ### Battery
 
-[BatteryMonitor](../Sources/Alcove/BatteryMonitor.swift) reads the first valid IOKit power source. It refreshes every 30 seconds and responds to NSProcessInfoPowerStateDidChange. Callbacks are emitted only when the charge level changes by more than 0.5 percentage points or the plug state changes.
+[BatteryMonitor](../Sources/Halo/BatteryMonitor.swift) reads the first valid IOKit power source. It refreshes every 30 seconds and responds to NSProcessInfoPowerStateDidChange. Callbacks are emitted only when the charge level changes by more than 0.5 percentage points or the plug state changes.
 
 ### Weather
 
-[WeatherMonitor](../Sources/Alcove/WeatherMonitor.swift) requests location access, obtains a location, and calls Open-Meteo for current conditions plus today's high/low. Requests are throttled to five minutes and the monitor refreshes every ten minutes. Cupertino coordinates are used as a fallback when no location is available.
+[WeatherMonitor](../Sources/Halo/WeatherMonitor.swift) requests location access, obtains a location, and calls Open-Meteo for current conditions plus today's high/low. Requests are throttled to five minutes and the monitor refreshes every ten minutes. Cupertino coordinates are used as a fallback when no location is available.
 
 ### Focus
 
-[FocusMonitor](../Sources/Alcove/FocusMonitor.swift) reads Assertions.json and ModeConfigurations.json under ~/Library/DoNotDisturb/DB. It matches live assertion UUIDs to invalidation records, then resolves the mode name and icon. It uses both a directory watcher and a ten-second poll. If the files cannot be read, it remains silent.
+[FocusMonitor](../Sources/Halo/FocusMonitor.swift) reads Assertions.json and ModeConfigurations.json under ~/Library/DoNotDisturb/DB. It matches live assertion UUIDs to invalidation records, then resolves the mode name and icon. It uses both a directory watcher and a ten-second poll. If the files cannot be read, it remains silent.
 
 ### Notifications
 
-[NotificationMonitor](../Sources/Alcove/NotificationMonitor.swift) opens the usernoted SQLite database read-only. It records the maximum notification ID at startup, then emits only newer rows. Payloads are property lists containing app identifier, title, subtitle, body, and date. A directory watcher and four-second poll cover both normal and atomic database updates.
+[NotificationMonitor](../Sources/Halo/NotificationMonitor.swift) opens the usernoted SQLite database read-only. It records the maximum notification ID at startup, then emits only newer rows. Payloads are property lists containing app identifier, title, subtitle, body, and date. A directory watcher and four-second poll cover both normal and atomic database updates.
 
 ## Threading assumptions
 
@@ -137,7 +137,7 @@ UI state and AppleScript operations are expected on the main thread. Network com
 
 An activity normally requires changes in these places:
 
-1. Add a model and enum case in Island.swift.
+1. Add a model and enum case in Halo.swift.
 2. Add a rank and stable ID.
 3. Add collapsed leading/trailing content and an expanded view.
 4. Add monitor ownership and callbacks in AppDelegate.

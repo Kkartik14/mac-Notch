@@ -1,6 +1,6 @@
 # Permissions and privacy
 
-Alcove is an accessory app with an unsandboxed entitlement configuration. That avoids imposing a sandbox on the local adapters, but macOS TCC controls still apply to protected data and Apple Events.
+Halo is an accessory app with an unsandboxed entitlement configuration. That avoids imposing a sandbox on the local adapters, but macOS TCC controls still apply to protected data and Apple Events.
 
 ## Permission matrix
 
@@ -14,19 +14,19 @@ Alcove is an accessory app with an unsandboxed entitlement configuration. That a
 
 ## Automation
 
-Music and Spotify are read and controlled with NSAppleScript. The first operation may cause macOS to ask whether Alcove can control the target app.
+Music and Spotify are read and controlled with NSAppleScript. The first operation may cause macOS to ask whether Halo can control the target app.
 
 To review access:
 
 1. Open System Settings.
 2. Go to **Privacy & Security → Automation**.
-3. Allow Alcove to control Music and/or Spotify.
+3. Allow Halo to control Music and/or Spotify.
 
-The bundle declares NSAppleEventsUsageDescription in [Info.plist](../Sources/Alcove/Resources/Info.plist). Automation prompts are controlled by macOS and may need to be reset if permissions were previously denied.
+The bundle declares NSAppleEventsUsageDescription in [Info.plist](../Sources/Halo/Resources/Info.plist). Automation prompts are controlled by macOS and may need to be reset if permissions were previously denied.
 
 ## Location
 
-The app requests When In Use location access only when weather starts. The purpose string is declared in [Info.plist](../Sources/Alcove/Resources/Info.plist). Weather is fetched from Open-Meteo using latitude, longitude, and automatic timezone selection.
+The app requests When In Use location access only when weather starts. The purpose string is declared in [Info.plist](../Sources/Halo/Resources/Info.plist). Weather is fetched from Open-Meteo using latitude, longitude, and automatic timezone selection.
 
 If location is denied or unavailable, the monitor does not block the rest of the app. It attempts Cupertino fallback coordinates so the weather card can still show useful data during development.
 
@@ -40,7 +40,7 @@ Full Disk Access is needed on the tested macOS setup for these paths:
 ~/Library/Group Containers/group.com.apple.usernoted/db2/db
 ~~~
 
-Alcove does not request or open the System Settings pane automatically. It tests whether the files/database are readable and logs a single diagnostic message, then degrades quietly.
+Halo does not request or open the System Settings pane automatically. It tests whether the files/database are readable and logs a single diagnostic message, then degrades quietly.
 
 Music playback-session archives are read separately from:
 
@@ -58,7 +58,7 @@ The current source makes requests to:
 - itunes.apple.com for Music queue metadata.
 - Artwork URLs supplied by Spotify or Apple Music CDN data.
 
-There is no Alcove backend, analytics service, account system, or persistent application database. Track titles and playback state are processed locally; Music store IDs are sent to the iTunes Lookup endpoint only when the session queue needs display metadata.
+There is no Halo backend, analytics service, account system, or persistent application database. Track titles and playback state are processed locally; Music store IDs are sent to the iTunes Lookup endpoint only when the session queue needs display metadata.
 
 ## Changes to permission behavior
 

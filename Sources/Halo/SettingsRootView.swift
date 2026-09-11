@@ -3,8 +3,8 @@ import SwiftUI
 struct SettingsRootView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Alcove").font(.title).bold()
-            Text("Dynamic Island for your Mac")
+            Text("Halo").font(.title).bold()
+            Text("A quiet activity surface for your Mac")
                 .foregroundColor(.secondary)
             Divider()
             Text("Click the dashed-circle icon in the menu bar to add a test activity.")

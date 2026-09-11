@@ -1,52 +1,52 @@
 import Compression
 import XCTest
-@testable import Alcove
+@testable import Halo
 
-// MARK: - IslandCenter: live activities
+// MARK: - HaloCenter: live activities
 
-final class IslandCenterTests: XCTestCase {
+final class HaloCenterTests: XCTestCase {
 
     func testStartsIdle() {
-        let c = IslandCenter()
-        XCTAssertTrue(c.islands.isEmpty)
+        let c = HaloCenter()
+        XCTAssertTrue(c.activities.isEmpty)
         XCTAssertNil(c.expandedId)
     }
 
     func testCollapseKeepsActivityAlive() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.notification(NotificationActivity(appName: "A", sender: "B", body: "C", icon: "m")),
                   autoDismissAfter: nil, expand: true)
         XCTAssertEqual(c.expandedId, "notification")
         c.collapse("notification")
         XCTAssertNil(c.expandedId)
-        XCTAssertEqual(c.islands.count, 1, "collapse must keep the activity, unlike dismiss")
+        XCTAssertEqual(c.activities.count, 1, "collapse must keep the activity, unlike dismiss")
     }
 
     func testCollapseAfterAutoSettlesCardToPill() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.notification(NotificationActivity(appName: "A", sender: "B", body: "C", icon: "m")),
                   autoDismissAfter: nil, expand: true, collapseAfter: 0.5)
         XCTAssertEqual(c.expandedId, "notification")
         RunLoop.main.run(until: Date().addingTimeInterval(1.0))
         XCTAssertNil(c.expandedId, "card must settle back to pill")
-        XCTAssertEqual(c.islands.count, 1, "activity must survive the settle")
+        XCTAssertEqual(c.activities.count, 1, "activity must survive the settle")
     }
 
     func testQuietMonitorUpdatesNeverHijack() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.weather(WeatherActivity(temperatureC: 15, condition: "Clear", symbol: "s")),
                   autoDismissAfter: nil, expand: false)
-        XCTAssertNil(c.expandedId, "passive updates must not steal the island")
-        XCTAssertEqual(c.islands.count, 1)
+        XCTAssertNil(c.expandedId, "passive updates must not steal the halo")
+        XCTAssertEqual(c.activities.count, 1)
         // A repeat refresh must not expand either.
         c.present(.weather(WeatherActivity(temperatureC: 16, condition: "Clear", symbol: "s")),
                   autoDismissAfter: nil, expand: false)
         XCTAssertNil(c.expandedId)
-        XCTAssertEqual(c.islands.count, 1, "same id must update in place, not duplicate")
+        XCTAssertEqual(c.activities.count, 1, "same id must update in place, not duplicate")
     }
 
     func testDismissFallsBackToPreviousActivity() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.weather(WeatherActivity(temperatureC: 15, condition: "C", symbol: "s")),
                   autoDismissAfter: nil, expand: false)
         c.present(.notification(NotificationActivity(appName: "A", sender: "B", body: "C", icon: "m")),
@@ -56,16 +56,16 @@ final class IslandCenterTests: XCTestCase {
     }
 
     func testDismissAll() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.weather(WeatherActivity(temperatureC: 15, condition: "C", symbol: "s")),
                   autoDismissAfter: nil, expand: false)
         c.dismissAll()
-        XCTAssertTrue(c.islands.isEmpty)
+        XCTAssertTrue(c.activities.isEmpty)
         XCTAssertNil(c.expandedId)
     }
 
     func testActivityStackCapped() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         for i in 0..<6 {
             c.present(.notification(NotificationActivity(appName: "A\(i)", sender: "B", body: "C", icon: "m")),
                       autoDismissAfter: nil, expand: false)
@@ -73,15 +73,15 @@ final class IslandCenterTests: XCTestCase {
             c.dismiss("notification")
             c.present(.focus(FocusActivity(mode: "M\(i)")), autoDismissAfter: nil, expand: false)
         }
-        XCTAssertLessThanOrEqual(c.islands.count, 4)
+        XCTAssertLessThanOrEqual(c.activities.count, 4)
     }
 
     func testAutoDismissRemoves() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.notification(NotificationActivity(appName: "A", sender: "B", body: "C", icon: "m")),
                   autoDismissAfter: 0.5, expand: true)
         RunLoop.main.run(until: Date().addingTimeInterval(1.0))
-        XCTAssertTrue(c.islands.isEmpty)
+        XCTAssertTrue(c.activities.isEmpty)
     }
 
     func testNowPlayingProgressMath() {
@@ -95,17 +95,17 @@ final class IslandCenterTests: XCTestCase {
 // MARK: - Positioning: the anti-slide contract
 
 final class PositioningTests: XCTestCase {
-    // Built-in 14" geometry: 1512x982, menu bar 32, notch gap 663..848.
-    let notchMin = 663.0, notchMax = 848.0
+    // Built-in 14" geometry: 1512x982, menu bar 32, top-surface gap 663..848.
+    let topGapMin = 663.0, topGapMax = 848.0
     let midX = 756.0, menuBar = 32.0, maxY = 982.0
 
     func origin(w: Double, h: Double) -> CGPoint {
-        IslandWindowController.islandOrigin(width: w, height: h,
+        HaloWindowController.haloOrigin(width: w, height: h,
                                            screenMidX: midX, menuBarHeight: menuBar,
                                            screenMaxY: maxY)
     }
 
-    func testIdlePillSitsInNotch() {
+    func testIdlePillSitsAtTopSurface() {
         let o = origin(w: 180, h: 32)
         XCTAssertEqual(o.x, 666.0, accuracy: 0.01)
         XCTAssertEqual(o.y, 950.0, accuracy: 0.01)
@@ -183,30 +183,30 @@ final class WeatherTests: XCTestCase {
 
 final class PriorityTests: XCTestCase {
     func testAmbientRankOrder() {
-        XCTAssertLessThan(IslandCenter.rank(of: .weather(WeatherActivity(temperatureC: 20, condition: "C", symbol: "s"))),
-                          IslandCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))))
-        XCTAssertLessThan(IslandCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))),
-                          IslandCenter.rank(of: .focus(FocusActivity(mode: "M"))))
-        XCTAssertLessThan(IslandCenter.rank(of: .focus(FocusActivity(mode: "M"))),
-                          IslandCenter.rank(of: .nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true))))
+        XCTAssertLessThan(HaloCenter.rank(of: .weather(WeatherActivity(temperatureC: 20, condition: "C", symbol: "s"))),
+                          HaloCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))))
+        XCTAssertLessThan(HaloCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))),
+                          HaloCenter.rank(of: .focus(FocusActivity(mode: "M"))))
+        XCTAssertLessThan(HaloCenter.rank(of: .focus(FocusActivity(mode: "M"))),
+                          HaloCenter.rank(of: .nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true))))
     }
 
     func testPresentKeepsRankOrder() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.weather(WeatherActivity(temperatureC: 20, condition: "C", symbol: "s")), autoDismissAfter: nil, expand: false)
         c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: false)
         c.present(.charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil)), autoDismissAfter: nil, expand: false)
-        XCTAssertEqual(c.islands.map(\.id), ["weather", "charging", "nowPlaying"])
+        XCTAssertEqual(c.activities.map(\.id), ["weather", "charging", "nowPlaying"])
     }
 
     func testPlugOverrideAndReturn() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: false)
         c.present(.charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil)), autoDismissAfter: nil, expand: false)
         c.moveToTop("charging")
-        XCTAssertEqual(c.islands.last?.id, "charging")
+        XCTAssertEqual(c.activities.last?.id, "charging")
         c.applyPriorityOrder()
-        XCTAssertEqual(c.islands.map(\.id), ["charging", "nowPlaying"])
+        XCTAssertEqual(c.activities.map(\.id), ["charging", "nowPlaying"])
     }
 }
 
@@ -265,14 +265,14 @@ final class UpNextTests: XCTestCase {
     }
 
     func testQueueAttachesSilently() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)),
                   autoDismissAfter: nil, expand: true)
         c.collapse("nowPlaying") // card settled back to pill
         c.updateNowPlayingQueue([UpNextItem(title: "Next", artist: "Someone")])
-        XCTAssertNil(c.expandedId, "queue attach must never expand the island")
-        XCTAssertEqual(c.islands.count, 1, "queue attach must not add or remove activities")
-        guard case .nowPlaying(let n) = c.islands[0] else {
+        XCTAssertNil(c.expandedId, "queue attach must never expand the halo")
+        XCTAssertEqual(c.activities.count, 1, "queue attach must not add or remove activities")
+        guard case .nowPlaying(let n) = c.activities[0] else {
             return XCTFail("expected the nowPlaying activity")
         }
         XCTAssertEqual(n.upNext.count, 1)
@@ -280,20 +280,20 @@ final class UpNextTests: XCTestCase {
     }
 
     func testQueueSkipsWriteWhenUnchanged() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)),
                   autoDismissAfter: nil, expand: false)
         let items = [UpNextItem(title: "Next", artist: "Someone")]
         c.updateNowPlayingQueue(items)
         c.updateNowPlayingQueue(items) // duplicate write
-        guard case .nowPlaying(let n) = c.islands[0] else {
+        guard case .nowPlaying(let n) = c.activities[0] else {
             return XCTFail("expected the nowPlaying activity")
         }
         XCTAssertEqual(n.upNext, items, "same queue must not duplicate or corrupt")
     }
 
     func testRecentSurvivesTrackChange() {
-        let c = IslandCenter()
+        let c = HaloCenter()
         let recents = [PlaybackHistoryMonitor.Track(title: "Old Song", artist: "X", storeID: nil, url: nil, artworkURL: nil, artworkData: nil, date: Date())]
         c.present(.nowPlaying(NowPlayingActivity(title: "First", artist: "A", isPlaying: true)),
                   autoDismissAfter: nil, expand: false)
@@ -301,7 +301,7 @@ final class UpNextTests: XCTestCase {
         // Track change: fresh card arrives with empty recent — cache must re-attach.
         c.present(.nowPlaying(NowPlayingActivity(title: "Second", artist: "B", isPlaying: true)),
                   autoDismissAfter: nil, expand: false)
-        guard case .nowPlaying(let n) = c.islands.last else {
+        guard case .nowPlaying(let n) = c.activities.last else {
             return XCTFail("expected the nowPlaying activity")
         }
         XCTAssertEqual(n.recent, recents, "fallback rail must survive the fresh card on track change")
