@@ -1,3 +1,4 @@
+import Compression
 import XCTest
 @testable import Alcove
 
@@ -233,6 +234,190 @@ final class NotificationParseTests: XCTestCase {
 
     func testRejectsGarbage() {
         XCTAssertNil(NotificationMonitor.parse(data: Data([0, 1, 2, 3]), appIdentifier: "x"))
+    }
+}
+
+// MARK: - Up Next queue
+
+final class UpNextTests: XCTestCase {
+    func testParsesNeighborRecords() {
+        let text = "PLID123\u{1E}101\u{1F}111\u{1F}Song A\u{1F}Artist A\u{1E}102\u{1F}112\u{1F}Song B\u{1F}Artist B\u{1E}103\u{1F}113\u{1F}Song C\u{1F}Artist C"
+        let (pid, items) = MusicAppMonitor.parseUpNext(text)
+        XCTAssertEqual(pid, "PLID123")
+        XCTAssertEqual(items.count, 3)
+        XCTAssertEqual(items[0].title, "Song A")
+        XCTAssertEqual(items[0].artist, "Artist A")
+        XCTAssertEqual(items[0].playlistID, "PLID123")
+        XCTAssertEqual(items[0].trackIndex, 101)
+        XCTAssertEqual(items[2].artist, "Artist C")
+    }
+
+    func testSkipsMalformedAndUnnamed() {
+        // Record 2 lacks the artist field; record 3 has an empty title.
+        let text = "PLID\u{1E}101\u{1F}1\u{1F}Song A\u{1F}Artist A\u{1E}102\u{1F}2\u{1F}Song B\u{1E}103\u{1F}3\u{1F}\u{1F}Artist C\u{1E}104\u{1F}4\u{1F}Song D\u{1F}Artist D"
+        let (_, items) = MusicAppMonitor.parseUpNext(text)
+        XCTAssertEqual(items.map(\.title), ["Song A", "Song D"])
+    }
+
+    func testEmptyAndGarbage() {
+        XCTAssertTrue(MusicAppMonitor.parseUpNext("").1.isEmpty)
+        XCTAssertTrue(MusicAppMonitor.parseUpNext("NOQUEUE").1.isEmpty)
+    }
+
+    func testQueueAttachesSilently() {
+        let c = IslandCenter()
+        c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)),
+                  autoDismissAfter: nil, expand: true)
+        c.collapse("nowPlaying") // card settled back to pill
+        c.updateNowPlayingQueue([UpNextItem(title: "Next", artist: "Someone")])
+        XCTAssertNil(c.expandedId, "queue attach must never expand the island")
+        XCTAssertEqual(c.islands.count, 1, "queue attach must not add or remove activities")
+        guard case .nowPlaying(let n) = c.islands[0] else {
+            return XCTFail("expected the nowPlaying activity")
+        }
+        XCTAssertEqual(n.upNext.count, 1)
+        XCTAssertEqual(n.upNext[0].title, "Next")
+    }
+
+    func testQueueSkipsWriteWhenUnchanged() {
+        let c = IslandCenter()
+        c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)),
+                  autoDismissAfter: nil, expand: false)
+        let items = [UpNextItem(title: "Next", artist: "Someone")]
+        c.updateNowPlayingQueue(items)
+        c.updateNowPlayingQueue(items) // duplicate write
+        guard case .nowPlaying(let n) = c.islands[0] else {
+            return XCTFail("expected the nowPlaying activity")
+        }
+        XCTAssertEqual(n.upNext, items, "same queue must not duplicate or corrupt")
+    }
+
+    func testRecentSurvivesTrackChange() {
+        let c = IslandCenter()
+        let recents = [PlaybackHistoryMonitor.Track(title: "Old Song", artist: "X", storeID: nil, url: nil, artworkURL: nil, artworkData: nil, date: Date())]
+        c.present(.nowPlaying(NowPlayingActivity(title: "First", artist: "A", isPlaying: true)),
+                  autoDismissAfter: nil, expand: false)
+        c.updateNowPlayingRecent(recents)
+        // Track change: fresh card arrives with empty recent — cache must re-attach.
+        c.present(.nowPlaying(NowPlayingActivity(title: "Second", artist: "B", isPlaying: true)),
+                  autoDismissAfter: nil, expand: false)
+        guard case .nowPlaying(let n) = c.islands.last else {
+            return XCTFail("expected the nowPlaying activity")
+        }
+        XCTAssertEqual(n.recent, recents, "fallback rail must survive the fresh card on track change")
+    }
+}
+
+// MARK: - Playback history (session archives)
+
+final class PlaybackHistoryTests: XCTestCase {
+    /// Raw-deflate body wrapped in a minimal gzip container, exactly the
+    /// shape Music writes (FLG=0; our decoder ignores the trailer).
+    private func gzipWrap(_ raw: Data) -> Data {
+        var body = raw
+        let cap = raw.count * 2 + 64
+        var dst = [UInt8](repeating: 0, count: cap)
+        let n = compression_encode_buffer(&dst, cap, [UInt8](body), body.count, nil,
+                                          compression_algorithm(rawValue: 0x205))
+        body = Data(dst.prefix(n))
+        var gz = Data([0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 0x00])
+        gz += body
+        gz += Data(repeating: 0, count: 8) // CRC32 + ISIZE (unused by our decoder)
+        return gz
+    }
+
+    /// Matches the verified live shape: top f1 = window id string,
+    /// top f2 = nested item { f1 title, f6 album, f7 artist }.
+    private func protobuf(title: String, artist: String) -> Data {
+        func lenDelimited(_ n: Int, _ payload: Data) -> Data {
+            var d = Data([UInt8(n << 3 | 2)])
+            var len = payload.count
+            while len >= 0x80 { d.append(UInt8(len & 0x7f) | 0x80); len >>= 7 }
+            d.append(UInt8(len))
+            d.append(payload)
+            return d
+        }
+        var item = Data()
+        item += lenDelimited(1, Data(title.utf8))
+        item += lenDelimited(6, Data("Some Album".utf8))
+        item += lenDelimited(7, Data(artist.utf8))
+        item += lenDelimited(8, Data()) // zero-length field: real sessions contain these
+        var d = Data()
+        d += lenDelimited(1, Data("8600::8610".utf8))
+        d += lenDelimited(2, item)
+        return d
+    }
+
+    func testProtobufParsesTitleArtist() {
+        let (t, a) = PlaybackHistoryMonitor.parseProtobuf(url: protobuf(title: "Dracula", artist: "Tame Impala"))!
+        XCTAssertEqual(t, "Dracula")
+        XCTAssertEqual(a, "Tame Impala")
+    }
+
+    func testProtobufRejectsGarbage() {
+        XCTAssertNil(PlaybackHistoryMonitor.parseProtobuf(url: Data([0xff, 0xff, 0xff])))
+    }
+
+    func testGunzipDecodesRealGzipShape() {
+        let payload = Data("{\"hello\":\"world\"}".utf8)
+        let gz = gzipWrap(payload)
+        XCTAssertNil(PlaybackHistoryMonitor.gunzip(url: URL(fileURLWithPath: "/nonexistent"))) // sanity
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try! gz.write(to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let decoded = PlaybackHistoryMonitor.gunzip(url: tmp)
+        XCTAssertEqual(String(data: decoded ?? Data(), encoding: .utf8), "{\"hello\":\"world\"}")
+    }
+
+    func testExtractsJSONWithEscapesAndPrefixBytes() {
+        let json = #"{"id":"1645617485","attributes":{"url":"https:\/\/music.apple.com\/in\/album\/wannabe\/1645617160?i=1645617485","playParams":{"id":"1645617485","kind":"song"}}}"#
+        let blob = Data([0x00, 0x05]) + Data(json.utf8) + Data([0x00, 0x01])
+        let obj = PlaybackHistoryMonitor.extractFirstJSON(url: blob) as? [String: Any]
+        let attrs = obj?["attributes"] as? [String: Any]
+        XCTAssertEqual((attrs?["playParams"] as? [String: Any])?["id"] as? String, "1645617485")
+    }
+
+    func testParseSessionFromSyntheticArchive() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try gzipWrap(protobuf(title: "Loser", artist: "Tame Impala")).write(to: dir.appendingPathComponent("contentItem.protobuf.gz"))
+        let json = #"{"id":"77","attributes":{"name":"Loser","playParams":{"id":"77"},"url":"https:\/\/music.apple.com\/x\/77","artwork":{"url":"https:\/\/is1-ssl.mzstatic.com\/image\/thumb\/Music\/v4\/abc\/196589493194.jpg\/{w}x{h}bb.jpg"}}}"#
+        try gzipWrap(Data(json.utf8)).write(to: dir.appendingPathComponent("itemPayload.opackCoder.gz"))
+        let track = try XCTUnwrap(PlaybackHistoryMonitor.parseSession(dir))
+        XCTAssertEqual(track.title, "Loser")
+        XCTAssertEqual(track.artist, "Tame Impala")
+        XCTAssertEqual(track.storeID, "77")
+        XCTAssertEqual(track.musicAppURL?.absoluteString, "music://music.apple.com/x/77")
+        XCTAssertEqual(track.artworkURL, "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/abc/196589493194.jpg/64x64bb.jpg")
+    }
+
+    func testParseSessionSkipsArchiveWithoutContent() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertNil(PlaybackHistoryMonitor.parseSession(dir))
+    }
+
+    func testSizedArtworkURL() {
+        // {w}x{h} template from itemPayload JSON
+        XCTAssertEqual(
+            PlaybackHistoryMonitor.sizedArtworkURL("https://is1-ssl.mzstatic.com/image/thumb/x/1.jpg/{w}x{h}bb.jpg"),
+            "https://is1-ssl.mzstatic.com/image/thumb/x/1.jpg/64x64bb.jpg")
+        // fixed size from the protobuf
+        XCTAssertEqual(
+            PlaybackHistoryMonitor.sizedArtworkURL("https://is1-ssl.mzstatic.com/image/thumb/x/1.jpg/800x800bb.jpg"),
+            "https://is1-ssl.mzstatic.com/image/thumb/x/1.jpg/64x64bb.jpg")
+        // non-CDN URLs are rejected
+        XCTAssertNil(PlaybackHistoryMonitor.sizedArtworkURL("https://evil.example.com/1.jpg"))
+    }
+
+    func testFindArtworkURLInProtobuf() {
+        let blob = Data("\n\u{10}8621::8629\n\u{1F}Still Breathing\u{11}https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/x/00602567892410.rgb.jpg/800x800bb.jpg\n".utf8)
+        XCTAssertEqual(
+            PlaybackHistoryMonitor.findArtworkURL(in: blob),
+            "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/x/00602567892410.rgb.jpg/64x64bb.jpg")
+        XCTAssertNil(PlaybackHistoryMonitor.findArtworkURL(in: Data("no urls here".utf8)))
     }
 }
 

@@ -19,6 +19,8 @@ final class MusicAppMonitor: ObservableObject {
     /// Fired on every poll for the same track (progress corrections).
     /// Must update the island silently — never expand.
     var onProgress: ((TimeInterval, TimeInterval, Bool) -> Void)?
+    /// Up Next queue, arriving after the card (playlist reads are slow).
+    var onQueue: (([UpNextItem]) -> Void)?
 
     static var isMusicRunning: Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music").isEmpty
@@ -147,6 +149,107 @@ final class MusicAppMonitor: ObservableObject {
         current = activity
         NSLog("[Alcove] music: update %@ - %@ (%@)", title, artist, isPlaying ? "playing" : "paused")
         onUpdate?(activity, image)
+        fetchUpNext()
+    }
+
+    /// Up Next: the tracks immediately after the current one. Bounded reads
+    /// only (`index of current track` + 3 neighbor reads, ~0.2s) — no
+    /// playlist enumeration, so library size is irrelevant.
+    ///
+    /// Tiers, each verified before use (the index spaces are NOT the same:
+    /// `index of current track` can point at an unreadable play queue):
+    /// 1. `current playlist` — works when playing from a real playlist.
+    /// 2. `library playlist 1` — when playing from the Library.
+    ///    (`current playlist` fails with -1728 there.)
+    /// 3. Give up with NOQUEUE — playing from the Apple Music catalog has
+    ///    no scripting-visible container at all.
+    /// Runs on the main thread like every other script here
+    /// (NSAppleScript is main-thread-only); the bounded cost makes that
+    /// acceptable on a track change.
+    private func fetchUpNext() {
+        let signature = lastSignature
+        let source = """
+        tell application "Music"
+          try
+            set fsep to character id 31
+            set rsep to character id 30
+            set curID to (database ID of current track) as string
+            set i to index of current track
+            set v to missing value
+            try
+              set v to current playlist
+              if (database ID of track i of v) as string is not curID then set v to missing value
+            end try
+            if v is missing value then
+              try
+                set v to library playlist 1
+                if (database ID of track i of v) as string is not curID then set v to missing value
+              end try
+            end if
+            if v is missing value then return "NOQUEUE"
+            set out to (persistent ID of v) & rsep
+            repeat with j from (i + 1) to (i + 3)
+              try
+                set t to track j of v
+                set out to out & (j as string) & fsep & (database ID of t as string) & fsep & (name of t) & fsep & (artist of t) & rsep
+              end try
+            end repeat
+            return out
+          on error
+            return "NOQUEUE"
+          end try
+        end tell
+        """
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.lastSignature == signature else { return }
+            guard let script = NSAppleScript(source: source) else { return }
+            var error: NSDictionary?
+            let result = script.executeAndReturnError(&error)
+            guard error == nil, result.descriptorType != typeNull else {
+                NSLog("[Alcove] music: up-next script failed")
+                return
+            }
+            let text = result.stringValue ?? ""
+            guard !text.isEmpty, text != "NOQUEUE" else {
+                // Catalog context (radio, search, curated mixes): no
+                // scripting-visible container. The session-queue resolver
+                // (PlaybackHistoryMonitor) owns these now — album-order
+                // guessing showed wrong songs for playlist mixes, so the
+                // store fallback is deleted, not demoted.
+                NSLog("[Alcove] music: up-next unavailable via scripting (catalog context)")
+                return
+            }
+            let (playlistID, items) = Self.parseUpNext(text)
+            guard !items.isEmpty else { return }
+            if var cur = self.current {
+                cur.upNext = items
+                self.current = cur
+            }
+            NSLog("[Alcove] music: up-next %d tracks (playlist %@)", items.count, playlistID ?? "-")
+            self.onQueue?(items)
+        }
+    }
+
+    /// Pure decode of the up-next payload: header record is the playlist
+    /// persistent ID, then `index<31>dbid<31>title<31>artist<30>` records.
+    /// Separated for unit testing, like NotificationMonitor.parse.
+    /// Returns (playlistID, items).
+    static func parseUpNext(_ text: String) -> (String?, [UpNextItem]) {
+        let recs = text.components(separatedBy: "\u{1E}").filter { !$0.isEmpty }
+        guard recs.count >= 1 else { return (nil, []) }
+        // Header: bare persistent ID (no separators) vs first record check.
+        var playlistID: String?
+        var rest = recs
+        if !recs[0].contains("\u{1F}") {
+            playlistID = recs[0].isEmpty ? nil : recs[0]
+            rest = Array(recs.dropFirst())
+        }
+        let items: [UpNextItem] = rest.compactMap { rec in
+            let f = rec.components(separatedBy: "\u{1F}")
+            guard f.count >= 4, let idx = Int(f[0]), !f[2].isEmpty else { return nil }
+            return UpNextItem(title: f[2], artist: f[3], playlistID: playlistID, trackIndex: idx)
+        }
+        return (playlistID, items)
     }
 
     private func fetchArtwork() -> Data? {
