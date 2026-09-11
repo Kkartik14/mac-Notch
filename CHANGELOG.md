@@ -12,6 +12,7 @@ This file records user-visible changes. The project is currently in active devel
 - Added battery, weather, Focus, and notification monitors.
 - Added activity priority, collapse, dismissal, and progress interpolation behavior.
 - Added parser, state, positioning, and host-safety tests.
+- Added tested release archive creation with checksum output and optional Developer ID signing/notarization hooks.
 
 ## Planned / not yet complete
 
@@ -19,4 +20,4 @@ This file records user-visible changes. The project is currently in active devel
 - Manual Focus-mode selection.
 - MusicKit-based direct replay for catalog recent tracks.
 - UI automation and snapshot coverage.
-- Signed/notarized distribution packaging.
+- Public signed/notarized distribution.

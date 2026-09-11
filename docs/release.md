@@ -2,7 +2,7 @@
 
 ## Current state
 
-[bundle.sh](../bundle.sh) creates a local unsigned Halo.app. It does not sign, notarize, staple, package, or publish the application. The checked-in bundle metadata currently uses:
+[bundle.sh](../bundle.sh) creates a local Halo.app. It is unsigned by default, but signs the app automatically when `HALO_SIGNING_IDENTITY` is set. [release.sh](../release.sh) runs the tests, creates a versioned zip and checksum, and can optionally submit the archive for notarization. Neither script publishes the release for you. The checked-in bundle metadata currently uses:
 
 - Bundle identifier: com.tryhalo.halo
 - Short version: 1.0
@@ -10,7 +10,7 @@
 
 Before a public release, decide the support contact, license, update/distribution channel, and whether the private MediaRemote dependency is acceptable for the target audience.
 
-## Local release build
+## Local app build
 
 ~~~bash
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -18,13 +18,36 @@ export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 open Halo.app
 ~~~
 
-Run the tests before packaging:
+Without `HALO_SIGNING_IDENTITY`, this creates an unsigned app for local development or beta distribution. The generated `Halo.app` is ignored by Git.
+
+## Release archive
+
+Create a tested archive and checksum:
 
 ~~~bash
-swift test
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+./release.sh
 ~~~
 
-If Xcode is not the active developer directory, retain the DEVELOPER_DIR export for both commands.
+The output is:
+
+~~~text
+dist/Halo-1.0.zip
+dist/Halo-1.0.zip.sha256
+~~~
+
+Set `HALO_DIST_DIR` to use another output directory. Set `HALO_SKIP_TESTS=1` only when the tests have already been run separately. Do not commit `dist/`.
+
+For a GitHub Release, upload both the zip and checksum as assets. Keep the release notes user-facing and identify unsigned builds explicitly.
+
+The repository includes [CI](../.github/workflows/ci.yml) and an [unsigned beta release workflow](../.github/workflows/unsigned-release.yml). Once those workflow files are committed and pushed, create a tag after updating the bundle version:
+
+~~~bash
+git tag v1.0
+git push origin v1.0
+~~~
+
+The workflow runs `release.sh`, verifies the checksum, and publishes the zip and checksum with the repository's GitHub token. It deliberately does not sign or notarize the app. Do not use this workflow for a production release until the signing and notarization path below is configured.
 
 ## Versioning
 
@@ -34,31 +57,39 @@ The package manifest does not currently define a version or an Xcode project; th
 
 ## Signing
 
-For a Developer ID distribution build, sign with an Apple Developer ID Application certificate and the repository entitlements. Replace the identity placeholder with the exact certificate name installed in the keychain:
+The signing identity is never stored in the repository. First check whether a usable certificate and private key are installed locally:
 
 ~~~bash
-codesign --force --deep --options runtime \
-  --entitlements Halo.entitlements \
-  --sign "Developer ID Application: YOUR NAME (TEAMID)" \
-  Halo.app
-
-codesign --verify --deep --strict --verbose=2 Halo.app
+security find-identity -v -p codesigning
 ~~~
 
-Use a clean release build for signing. Do not commit certificates, private keys, notarization credentials, or user-specific provisioning files.
+Look for an identity beginning with `Developer ID Application:`. Set that exact value only in your shell environment:
+
+~~~bash
+export HALO_SIGNING_IDENTITY="Developer ID Application: YOUR NAME (TEAMID)"
+./release.sh
+~~~
+
+`bundle.sh` uses the identity to enable the hardened runtime, apply [Halo.entitlements](../Halo.entitlements), and verify the resulting signature. If no identity is set, the output is explicitly unsigned. If an identity is set but is expired, revoked, or lacks its private key, signing fails.
+
+Do not commit certificates, private keys, `.p12` exports, notarization credentials, or user-specific provisioning files. If signing in CI later, store the certificate and private key in the CI secret store and provide the identity through `HALO_SIGNING_IDENTITY`.
 
 ## Notarization
 
-Create a zip with the app bundle as its top-level item:
+Notarization requires an active Apple developer account/team and a valid Developer ID signature. Store a notarytool keychain profile locally, then pass only the profile name to the script:
 
 ~~~bash
-ditto -c -k --keepParent Halo.app Halo.zip
+export HALO_SIGNING_IDENTITY="Developer ID Application: YOUR NAME (TEAMID)"
+export HALO_NOTARY_PROFILE="halo-notary"
+./release.sh
 ~~~
 
-Submit using an already configured notarytool keychain profile:
+`release.sh` submits the archive, waits for Apple’s result, staples the ticket to `Halo.app`, validates the staple, verifies Gatekeeper assessment, then recreates the zip so the distributed archive contains the stapled app.
+
+The equivalent manual commands are:
 
 ~~~bash
-xcrun notarytool submit Halo.zip \
+xcrun notarytool submit dist/Halo-1.0.zip \
   --keychain-profile YOUR_PROFILE \
   --wait
 
@@ -67,7 +98,7 @@ xcrun stapler validate Halo.app
 spctl --assess --type execute --verbose=4 Halo.app
 ~~~
 
-The exact signing/notarization options may change with Apple's tooling. Verify the final artifact on a clean Mac with no development certificate or source checkout.
+Verify the final artifact on a clean Mac with no development certificate or source checkout. Apple’s [macOS distribution guidance](https://developer.apple.com/macos/distribution/) and [notarization guidance](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) describe the account and Gatekeeper requirements.
 
 ## Release checklist
 
@@ -82,4 +113,5 @@ The exact signing/notarization options may change with Apple's tooling. Verify t
 - [ ] Notarize and staple the app.
 - [ ] Verify Gatekeeper assessment on a clean system.
 - [ ] Archive the exact zip and release notes.
-- [ ] Do not commit Halo.app, .build, credentials, or local TCC artifacts.
+- [ ] Upload the zip and checksum to the intended release channel.
+- [ ] Do not commit Halo.app, dist/, .build, credentials, or local TCC artifacts.

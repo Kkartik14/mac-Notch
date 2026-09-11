@@ -16,6 +16,9 @@ DerivedData/
 
 # Build output (rebuilt via ./bundle.sh)
 Halo.app/
+dist/
+Halo-*.zip
+Halo-*.zip.sha256
 
 # macOS
 .DS_Store

@@ -4,6 +4,20 @@ Halo is a native macOS 14 app that provides a compact live activity surface at t
 
 The current implementation is a development snapshot. It reads local macOS and media-app state, renders live activity cards, and provides playback controls, but it is not yet a signed, notarized, or production-distribution build.
 
+## Download
+
+Published app builds should be attached to the repository's GitHub Releases rather than committed to the source tree. Until a Developer ID-signed release is available, label downloads clearly as **unsigned beta** builds.
+
+To install an unsigned beta:
+
+1. Download the `Halo-<version>.zip` asset and its `.sha256` checksum from a GitHub Release.
+2. Verify the checksum with `shasum -a 256 -c Halo-<version>.zip.sha256`.
+3. Unzip the archive and move `Halo.app` to `/Applications`.
+4. Right-click `Halo.app`, choose **Open**, and confirm the macOS warning. This is a one-time approval for the downloaded app; do not disable Gatekeeper globally.
+5. Grant Automation, Location Services, and Full Disk Access only for the features you want to use. See [permissions and privacy](docs/permissions.md).
+
+Once a valid Developer ID certificate and notarization credentials are available, the same release workflow can produce a signed and notarized build. See [docs/release.md](docs/release.md).
+
 ## Features
 
 - A fixed, top-pinned black pill/card that morphs in SwiftUI without moving the underlying window.
@@ -39,6 +53,17 @@ The script performs a release build and creates Halo.app at the repository root.
 ~~~bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build
 ~~~
+
+To create a tested release archive, use:
+
+~~~bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+./release.sh
+~~~
+
+This writes `dist/Halo-<version>.zip` and a matching SHA-256 checksum. Without `HALO_SIGNING_IDENTITY`, the archive is unsigned. Optional signing and notarization variables are documented in [docs/release.md](docs/release.md).
+
+The repository also includes CI and an optional unsigned beta release workflow. After these workflow files are committed, pushing a tag such as `v1.0` builds the archive and publishes it as a GitHub Release. The workflow intentionally does not sign or notarize the app.
 
 If Xcode is installed elsewhere, update DEVELOPER_DIR accordingly. To select Xcode permanently for the machine:
 
@@ -110,6 +135,7 @@ Halo does not run a backend or maintain its own database. It stores runtime stat
 | Sources/Halo/SettingsRootView.swift | Current minimal Settings window. |
 | Tests/HaloTests/HaloTests.swift | Unit and lightweight host integration tests. |
 | bundle.sh | Release build and unsigned app-bundle creation. |
+| release.sh | Tested release archive creation with optional signing and notarization. |
 | Halo.entitlements / Sources/Halo/Resources/Info.plist | Runtime entitlements and bundle metadata. |
 
 ## Known limitations
@@ -119,7 +145,7 @@ Halo does not run a backend or maintain its own database. It stores runtime stat
 - The context-menu Notification action is demo data. The notification monitor only emits rows created after it establishes its startup baseline.
 - Recent-track replay currently opens a Music deep link. The stored catalog ID is reserved for a future MusicKit-based playback path.
 - MediaRemote is a private framework and may change across macOS releases.
-- bundle.sh does not sign, notarize, or distribute the application. See docs/release.md.
+- Public distribution still requires a Developer ID signature and notarization. `release.sh` supports those steps when credentials are available; otherwise it creates an unsigned beta archive. See docs/release.md.
 
 ## Further documentation
 

@@ -10,7 +10,7 @@ Read:
 - [docs/architecture.md](docs/architecture.md) for state flow and source precedence.
 - [docs/testing.md](docs/testing.md) for the available test commands and host dependencies.
 
-Keep unrelated working-tree changes intact. Generated .build output and Halo.app are ignored and should not be committed.
+Keep unrelated working-tree changes intact. Generated .build output, Halo.app, and dist/ archives are ignored and should not be committed.
 
 ## Development workflow
 
@@ -26,6 +26,8 @@ Run the app from a freshly generated bundle when validating TCC permissions or A
 ./bundle.sh
 open Halo.app
 ~~~
+
+Use `./release.sh` when validating the tested archive workflow. It creates an unsigned archive unless `HALO_SIGNING_IDENTITY` is explicitly provided.
 
 ## Design rules
 
