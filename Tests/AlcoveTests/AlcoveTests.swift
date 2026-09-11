@@ -244,30 +244,40 @@ final class WeatherTests: XCTestCase {
     }
 }
 
-// MARK: - Springs: window physics settles
+// MARK: - Priority: ambient order + plug override
 
-final class SpringTests: XCTestCase {
-    func testSpringSettlesExactlyOnTarget() {
-        let s = SpringAnimation(response: 0.05, dampingRatio: 1.0, initialValue: 0)
-        let exp = expectation(description: "rest")
-        var last = 0.0
-        s.animate(to: 320, onChange: { last = $0 }, onRest: { exp.fulfill() })
-        wait(for: [exp], timeout: 5)
-        XCTAssertEqual(last, 320, accuracy: 0.001)
-        XCTAssertFalse(s.isRunning)
+final class PriorityTests: XCTestCase {
+    func testAmbientRankOrder() {
+        XCTAssertLessThan(IslandCenter.rank(of: .weather(WeatherActivity(temperatureC: 20, condition: "C", symbol: "s"))),
+                          IslandCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))))
+        XCTAssertLessThan(IslandCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))),
+                          IslandCenter.rank(of: .focus(FocusActivity(mode: "M"))))
+        XCTAssertLessThan(IslandCenter.rank(of: .focus(FocusActivity(mode: "M"))),
+                          IslandCenter.rank(of: .nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true))))
     }
 
-    func testSpringRetargetMidFlightKeepsGoing() {
-        let s = SpringAnimation(response: 0.08, dampingRatio: 1.0, initialValue: 180)
-        let exp = expectation(description: "rest")
-        var last = 0.0
-        s.animate(to: 320, onChange: { last = $0 }, onRest: { exp.fulfill() })
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        s.animate(to: 200, onChange: { last = $0 }, onRest: { exp.fulfill() })
-        wait(for: [exp], timeout: 5)
-        XCTAssertEqual(last, 200, accuracy: 0.5, "re-target must win without restarting")
+    func testPresentKeepsRankOrder() {
+        let c = IslandCenter()
+        c.present(.weather(WeatherActivity(temperatureC: 20, condition: "C", symbol: "s")), autoDismissAfter: nil, expand: false)
+        c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: false)
+        c.present(.charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil)), autoDismissAfter: nil, expand: false)
+        XCTAssertEqual(c.islands.map(\.id), ["weather", "charging", "nowPlaying"])
     }
 
+    func testPlugOverrideAndReturn() {
+        let c = IslandCenter()
+        c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: false)
+        c.present(.charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil)), autoDismissAfter: nil, expand: false)
+        c.moveToTop("charging")
+        XCTAssertEqual(c.islands.last?.id, "charging")
+        c.applyPriorityOrder()
+        XCTAssertEqual(c.islands.map(\.id), ["charging", "nowPlaying"])
+    }
+}
+
+// MARK: - MediaRemote: never crash without a player
+
+final class MediaRemoteTests: XCTestCase {
     func testMediaRemoteNeverCrashesWithoutPlayer() {
         // Must be safe to call with nothing playing / framework quirks.
         MediaRemote.sendCommand(.togglePlayPause)

@@ -2,20 +2,20 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Morph timing modeled on the boring.notch feel: snappy bouncy open,
-/// critically-damped close, light interactive hover. Window springs and
-/// SwiftUI animations share these so the two never disagree.
+/// Morph timing: bouncy open, critically-damped close. SwiftUI owns all
+/// motion now; the window never animates (Plan B).
 private let islandOpenResponse = 0.42
 private let islandOpenDamping: Double = 0.8
 private let islandCloseResponse = 0.45
 private let islandCloseDamping: Double = 1.0
-private let islandHoverResponse = 0.38
-private let islandHoverDamping: Double = 0.8
 
-/// Container sizes: full reference width. Single-activity content will sit
-/// left with empty space right — expected, preview only.
+/// Fixed window geometry (Plan B): the window never resizes or moves after
+/// placement. 640 content + shadow room. All morphing is SwiftUI content
+/// inside stationary glass — slide and lag have no mechanism left.
+private let islandWindowSize = CGSize(width: 660, height: 210)
+
+/// Container sizes for content inside the fixed window.
 private let islandOpenSize = CGSize(width: 640, height: 190)
-private let islandWindowPadding: CGFloat = 20 // shadow room around open card
 private let islandClosedFallbackWidth: CGFloat = 185
 private let islandClosedHeight: CGFloat = 32
 private let islandRadiiOpen = (top: CGFloat(19), bottom: CGFloat(24))
@@ -101,7 +101,12 @@ struct NotificationActivity: Equatable {
     var icon: String
 }
 
-struct FocusActivity: Equatable { var mode: String }
+struct FocusActivity: Equatable {
+    var mode: String
+    /// SF symbol name, or raw emoji/text when custom. Rendered via
+    /// FocusMonitor.isSFSymbol check.
+    var symbol: String = "moon.fill"
+}
 struct WeatherActivity: Equatable {
     var temperatureC: Int
     var condition: String
@@ -117,6 +122,8 @@ struct WeatherActivity: Equatable {
 final class IslandCenter: ObservableObject {
     @Published var islands: [IslandActivity] = []
     @Published var expandedId: String?
+    /// Latest battery fraction for pills that show it (focus trailing).
+    @Published var batteryLevel: Double?
     var deliver: ((IslandActivity) -> Void)?
 
     /// Priority (higher = shows on top). Ambient order: music > focus >
@@ -299,6 +306,20 @@ final class IslandCenter: ObservableObject {
 
     func cancelTimer() { dismiss("timer") }
 
+    /// Cache the latest battery level for pills (focus trailing shows it).
+    func updateBatteryLevel(_ level: Double) {
+        if batteryLevel != level { batteryLevel = level }
+    }
+
+    /// Attach late-arriving artwork (e.g. downloaded URLs) without
+    /// re-expanding or resetting the collapse timer.
+    func updateNowPlayingArtwork(_ data: Data) {
+        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = islands[idx] else { return }
+        n.artworkData = data
+        islands[idx] = .nowPlaying(n)
+    }
+
     /// Silent progress correction from the monitor (3s poll). Updates the
     /// island's copy in place — never expands, never hijacks.
     func updateNowPlayingProgress(elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool) {
@@ -361,20 +382,47 @@ final class IslandWindowController: NSObject {
     private var hoverInside = false
     private var recentMouse: [(time: Date, point: NSPoint)] = []
     private var pollCount = 0
-    private var frameSprings: (w: SpringAnimation, h: SpringAnimation)?
-    private var springTarget: NSRect = .zero
+    private var mouseMonitor: Any?
+    private var screenObserver: NSObjectProtocol?
 
     deinit {
         hoverTimer?.invalidate()
         hoverWork?.cancel()
-        frameSprings?.w.stop()
-        frameSprings?.h.stop()
+        if let m = mouseMonitor { NSEvent.removeMonitor(m) }
+        if let o = screenObserver { NotificationCenter.default.removeObserver(o) }
+    }
+
+    /// Visible content rect in screen coordinates: pill strip when settled,
+    /// full card when open. Everything else is transparent glass.
+    private func visibleContentRect() -> NSRect? {
+        guard let window else { return nil }
+        let f = window.frame
+        let isOpen: Bool = {
+            if let id = center.expandedId, center.islands.contains(where: { $0.id == id }) { return true }
+            return false
+        }()
+        let closedW = islandClosedWidth()
+        let w: CGFloat = isOpen ? islandOpenSize.width : (center.islands.isEmpty ? closedW : closedW + 60)
+        let h: CGFloat = isOpen ? islandOpenSize.height : islandClosedHeight
+        // Content is top-center anchored in the fixed window.
+        let x = f.midX - w / 2
+        let y = f.maxY - h
+        return NSRect(x: x - 6, y: y - 8, width: w + 12, height: h + 14)
+    }
+
+    /// Owns `ignoresMouseEvents`: glass passes everything through, shape
+    /// interacts. Called from the event fast path and the poll backstop.
+    private func updateEventRouting() {
+        guard let window else { return }
+        let over = visibleContentRect().map { $0.contains(NSEvent.mouseLocation) } ?? false
+        if window.ignoresMouseEvents == over {
+            window.ignoresMouseEvents = !over
+        }
     }
 
     func install(contextMenu: NSMenu? = nil) {
-        let closedW = islandClosedWidth()
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: closedW, height: islandClosedHeight),
+            contentRect: NSRect(x: 0, y: 0, width: islandWindowSize.width, height: islandWindowSize.height),
             styleMask: [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow],
             backing: .buffered,
             defer: false
@@ -388,48 +436,45 @@ final class IslandWindowController: NSObject {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
-        panel.ignoresMouseEvents = false
+        panel.ignoresMouseEvents = true // glass until proven shape (see below)
         panel.isReleasedWhenClosed = false
         panel.appearance = NSAppearance(named: .darkAqua)
 
-        let host = NSHostingView(rootView: IslandView(center: center, onSizeChange: { [weak self] size in
-            self?.resizeWindow(to: size)
-        }, actions: actions))
+        let host = NSHostingView(rootView: IslandView(center: center, actions: actions))
         host.autoresizingMask = [.width, .height]
         host.translatesAutoresizingMaskIntoConstraints = true
-        host.frame = NSRect(x: 0, y: 0, width: closedW, height: islandClosedHeight)
+        host.frame = NSRect(x: 0, y: 0, width: islandWindowSize.width, height: islandWindowSize.height)
         host.wantsLayer = true
         host.layer?.backgroundColor = .clear
         panel.contentView = host
-        panel.setContentSize(NSSize(width: closedW, height: islandClosedHeight))
         host.menu = contextMenu
 
-        // Hover to open, like the real Alcove: entering the island expands the
-        // top activity, leaving settles it back. inVisibleRect keeps tracking
-        // the full window as it resizes; activeAlways fires for our
-        // nonactivating panel.
-        host.addTrackingArea(NSTrackingArea(
-            rect: .zero,
-            options: [.inVisibleRect, .activeAlways, .mouseEnteredAndExited],
-            owner: self,
-            userInfo: nil
-        ))
-
-        positionInNotch(panel, width: closedW, height: islandClosedHeight)
+        positionInNotch(panel, width: islandWindowSize.width, height: islandWindowSize.height)
         panel.orderFrontRegardless()
         window = panel
+        updateEventRouting()
 
-        // Spring state matches the live size; resize targets retarget mid-flight.
-        // Bouncy open feel; close settles critically-damped via SwiftUI side.
-        let f = panel.frame
-        frameSprings = (
-            w: SpringAnimation(response: islandOpenResponse, dampingRatio: islandOpenDamping, initialValue: Double(f.size.width)),
-            h: SpringAnimation(response: islandOpenResponse, dampingRatio: islandOpenDamping, initialValue: Double(f.size.height))
-        )
-        springTarget = f
+        // Fast path: flip pass-through on every cursor move (O(1) rect test).
+        if mouseMonitor == nil {
+            mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+                self?.updateEventRouting()
+            }
+        }
+        // Screen attach/detach, fullscreen changes: re-pin the fixed window.
+        if screenObserver == nil {
+            screenObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let self, let window = self.window else { return }
+                self.positionInNotch(window, width: islandWindowSize.width, height: islandWindowSize.height)
+                self.updateEventRouting()
+            }
+        }
 
         // 10Hz hover poll: mouse events are unreliable inside the notch
-        // dead-zone, so hit-test the cursor position directly.
+        // dead-zone, so hit-test the cursor position directly. Doubles as
+        // the routing backstop (card opening under a parked cursor).
         hoverTimer?.invalidate()
         hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.pollHover()
@@ -437,40 +482,27 @@ final class IslandWindowController: NSObject {
     }
 
     func show(_ activity: IslandActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
-        NSLog("[Alcove] dbg: show %@ expand=%@ collapse=%@", activity.id, expand ? "Y" : "N", collapse.map { String($0) } ?? "-")
         center.present(activity, autoDismissAfter: seconds, expand: expand, collapseAfter: collapse)
+        // A fresh card under a parked cursor must still take clicks.
+        updateEventRouting()
     }
-    func expandTop() { center.toggleExpandTop() }
-    func dismissAll() { center.dismissAll() }
+    func expandTop() { center.toggleExpandTop(); updateEventRouting() }
+    func dismissAll() { center.dismissAll(); updateEventRouting() }
 
     // MARK: Hover to open
-
-    /// Hit area for hover-open: the visible pill strip only (top ~32pt +
-    /// small margin), NEVER the region below where an open card would be.
-    /// The window is transiently large while shrink springs settle, and has
-    /// transparent padding — testing the whole frame re-opens the island
-    /// when the cursor merely crosses the would-be-open area.
-    private func pillHitRect() -> NSRect? {
-        guard let window else { return nil }
-        let f = window.frame
-        return NSRect(x: f.minX - 6, y: f.maxY - 38, width: f.width + 12, height: 44)
-    }
 
     private func pollHover() {
         guard let window else { return }
         pollCount &+= 1
+        // Backstop for event routing (card opening under a parked cursor).
+        updateEventRouting()
         // Watchdog is expensive (NSScreen.screens is cross-process), so run it
         // at ~1Hz, not 10Hz. Hover hit-testing stays at 10Hz.
         // %10==1 includes the very first poll so a bad launch frame snaps fast.
         if pollCount % 10 == 1 {
             let onAnyScreen = NSScreen.screens.contains { $0.frame.intersects(window.frame) }
             if !onAnyScreen {
-                positionInNotch(window, width: window.frame.width, height: window.frame.height)
-                if let s = frameSprings {
-                    s.w.set(value: Double(window.frame.width))
-                    s.h.set(value: Double(window.frame.height))
-                }
-                springTarget = window.frame
+                positionInNotch(window, width: islandWindowSize.width, height: islandWindowSize.height)
                 return
             }
         }
@@ -478,22 +510,19 @@ final class IslandWindowController: NSObject {
         if center.islands.isEmpty { return }
         // Motion history (1s window): hover-open must come from the cursor
         // moving onto the pill — never from geometry changing under a
-        // parked cursor (elongation, shrink springs settling).
+        // parked cursor (e.g. the pill elongating as a song starts).
         let now = Date()
         let loc = NSEvent.mouseLocation
         recentMouse.append((now, loc))
         recentMouse.removeAll { now.timeIntervalSince($0.time) > 1.0 }
-        // Pill strip only — never the would-be-open region below.
-        let hit = pillHitRect() ?? window.frame
+        // Visible shape only — never transparent glass.
+        let hit = visibleContentRect() ?? window.frame
         let inside = hit.contains(loc)
         if inside != hoverInside {
             hoverInside = inside
             if inside { hoverEntered() } else { hoverExited() }
         }
     }
-
-    func mouseEntered(with event: NSEvent) { hoverEntered() }
-    func mouseExited(with event: NSEvent) { hoverExited() }
 
     private func hoverEntered() {
         hoverWork?.cancel()
@@ -502,7 +531,7 @@ final class IslandWindowController: NSObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             let loc = NSEvent.mouseLocation
-            let inHit = self.pillHitRect().map { $0.contains(loc) } ?? false
+            let inHit = self.visibleContentRect().map { $0.contains(loc) } ?? false
             let moved = self.mouseMovedRecently(threshold: 4)
             guard self.center.expandedId == nil,
                   let top = self.center.islands.last,
@@ -510,6 +539,7 @@ final class IslandWindowController: NSObject {
             NSLog("[Alcove] ui: hover-open %@", top.id)
             self.hoverOpenedId = top.id
             self.center.expandedId = top.id
+            self.updateEventRouting()
         }
         hoverWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -538,6 +568,7 @@ final class IslandWindowController: NSObject {
         let work = DispatchWorkItem { [weak self] in
             self?.center.collapse(id)
             self?.hoverOpenedId = nil
+            self?.updateEventRouting()
         }
         hoverWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -567,31 +598,6 @@ final class IslandWindowController: NSObject {
         panel.setFrame(NSRect(x: o.x, y: o.y, width: width, height: height), display: true)
     }
 
-    private func resizeWindow(to size: CGSize) {
-        guard window != nil, let screen = NSScreen.main else { return }
-        guard let notch = notchInfo() else { return }
-        let frame = screen.frame
-        // Never trust a transient garbage screen frame (display reconfig):
-        // an absurd target would fling the island off-screen with no recovery.
-        guard frame.width > 100, frame.height > 100 else { return }
-        let w = size.width
-        let h = size.height
-        guard w.isFinite, h.isFinite, w > 0, h > 0, w <= 800, h <= 600 else { return }
-        let o = Self.islandOrigin(width: Double(w), height: Double(h),
-                                  screenMidX: Double(frame.midX),
-                                  menuBarHeight: Double(notch.menuBarHeight),
-                                  screenMaxY: Double(frame.maxY))
-        let target = NSRect(x: o.x, y: o.y, width: w, height: h)
-        // Compare against the in-flight target, not the live frame: re-issued
-        // sizes retarget the springs instead of restarting the animation.
-        if abs(springTarget.width - target.width) < 0.5,
-           abs(springTarget.height - target.height) < 0.5,
-           abs(springTarget.origin.x - target.origin.x) < 0.5,
-           abs(springTarget.origin.y - target.origin.y) < 0.5 { return }
-        springTarget = target
-        driveSprings(to: target)
-    }
-
     /// Pure positioning math: always centered on the screen axis with the top
     /// edge pinned to the screen top. One center for every size — the island
     /// can grow/shrink but its center mathematically cannot move.
@@ -602,31 +608,6 @@ final class IslandWindowController: NSObject {
         let x = screenMidX - w / 2
         let y = screenMaxY - menuBarHeight - (h - menuBarHeight)
         return CGPoint(x: x, y: y)
-    }
-
-    /// Drive the window size with critically-damped springs at 120Hz.
-    /// Origin is a pure function of size (centered, top edge pinned), so the
-    /// island can only grow/shrink in place — never slide. Interruptible and
-    /// velocity-aware: re-targets continue from live values.
-    private func driveSprings(to target: NSRect) {
-        guard let s = frameSprings, window != nil,
-              let screen = NSScreen.main, let notch = notchInfo() else {
-            window?.setFrame(target, display: true)
-            return
-        }
-        let frame = screen.frame
-        let apply = { [weak self] in
-            guard let self, let window = self.window, let s = self.frameSprings else { return }
-            let o = Self.islandOrigin(width: s.w.value, height: s.h.value,
-                                      screenMidX: Double(frame.midX),
-                                      menuBarHeight: Double(notch.menuBarHeight),
-                                      screenMaxY: Double(frame.maxY))
-            window.setFrame(NSRect(x: o.x, y: o.y,
-                                   width: max(1, s.w.value), height: max(1, s.h.value)),
-                            display: true)
-        }
-        s.w.animate(to: Double(target.size.width), onChange: { _ in apply() })
-        s.h.animate(to: Double(target.size.height), onChange: { _ in apply() })
     }
 }
 
@@ -655,7 +636,6 @@ struct IslandActions {
 
 struct IslandView: View {
     @ObservedObject var center: IslandCenter
-    let onSizeChange: (CGSize) -> Void
     var actions: IslandActions = IslandActions()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -719,10 +699,9 @@ struct IslandView: View {
             .shadow(color: isOpen ? .black.opacity(0.7) : .clear, radius: 6)
         }
         .padding(.bottom, 8)
-        // Hug content exactly: a maxWidth/maxHeight frame here expands to
-        // fill the window, reports the window's own size back through the
-        // GeometryReader, and the window can then never shrink again.
-        .fixedSize(horizontal: true, vertical: true)
+        // Fill the fixed window, top-anchored: the window never resizes, so
+        // this frame is pure layout with no feedback loop.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .compositingGroup()
         // The whole island is hittable (clicks, right-click menu) — without
         // this, transparent regions (spacers, padding) let clicks fall
@@ -753,26 +732,7 @@ struct IslandView: View {
         // Bouncy open, critically-damped close — matches the reference feel.
         .animation(morphSpring, value: center.expandedId)
         .animation(.smooth, value: center.islands.count)
-        .overlay(
-            GeometryReader { proxy in
-                Color.clear
-                    .preference(key: SizeKey.self, value: proxy.size)
-            }
-        )
-        .onPreferenceChange(SizeKey.self) { size in
-            // Throttle: GeometryReader fires continuously during the morph.
-            // Only drive the window springs on real (>0.5pt) finite changes
-            // to avoid a layout -> resize -> layout feedback loop.
-            guard size.width.isFinite, size.height.isFinite else { return }
-            let dw = abs(size.width - lastReportedSize.width)
-            let dh = abs(size.height - lastReportedSize.height)
-            guard dw > 0.5 || dh > 0.5 else { return }
-            lastReportedSize = size
-            onSizeChange(size)
-        }
     }
-
-    @State private var lastReportedSize: CGSize = .zero
 
     private var preferredWidth: CGFloat {
         if isOpen { return expandedWidth }
@@ -854,6 +814,8 @@ struct IslandView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.green)
                 .frame(width: 20, height: 20)
+        case .focus(let f):
+            focusGlyph(for: f, size: 20)
         default:
             inlineDot(for: activity)
         }
@@ -877,9 +839,34 @@ struct IslandView: View {
             Text("\(w.temperatureC)°")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.white)
+        case .focus:
+            // Battery number, no % — the moon lives on the left.
+            if let level = center.batteryLevel {
+                Text("\(Int((level * 100).rounded()))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+            } else {
+                inlineDot(for: activity)
+            }
         default:
             inlineDot(for: activity)
         }
+    }
+
+    /// Live focus-mode glyph: SF symbol when valid, raw emoji/text when the
+    /// mode uses a custom icon. Always 1:1 with the system mode.
+    private func focusGlyph(for activity: FocusActivity, size: CGFloat) -> some View {
+        Group {
+            if FocusMonitor.isSFSymbol(activity.symbol) {
+                Image(systemName: activity.symbol)
+                    .font(.system(size: size * 0.5, weight: .semibold))
+                    .foregroundColor(.white)
+            } else {
+                Text(activity.symbol)
+                    .font(.system(size: size * 0.6))
+            }
+        }
+        .frame(width: size, height: size)
     }
 
     private func inlineDot(for activity: IslandActivity) -> some View {
@@ -962,12 +949,19 @@ struct IslandView: View {
 
     @ViewBuilder
     private func icon(for activity: IslandActivity, size: CGFloat) -> some View {
-        let (name, color) = iconSpec(for: activity)
-        ZStack {
-            Circle().fill(color.opacity(0.95)).frame(width: size, height: size)
-            Image(systemName: name)
-                .foregroundColor(.white)
-                .font(.system(size: size * 0.45, weight: .bold))
+        if case .focus(let f) = activity, !FocusMonitor.isSFSymbol(f.symbol) {
+            ZStack {
+                Circle().fill(Color.indigo.opacity(0.95)).frame(width: size, height: size)
+                Text(f.symbol).font(.system(size: size * 0.55))
+            }
+        } else {
+            let (name, color) = iconSpec(for: activity)
+            ZStack {
+                Circle().fill(color.opacity(0.95)).frame(width: size, height: size)
+                Image(systemName: name)
+                    .foregroundColor(.white)
+                    .font(.system(size: size * 0.45, weight: .bold))
+            }
         }
     }
 
@@ -977,7 +971,7 @@ struct IslandView: View {
         case .nowPlaying: return ("music.note", .pink)
         case .charging: return ("bolt.fill", .green)
         case .notification: return ("message.fill", .purple)
-        case .focus: return ("moon.fill", .indigo)
+        case .focus(let f): return (FocusMonitor.isSFSymbol(f.symbol) ? f.symbol : "moon.fill", .indigo)
         case .weather(let w): return (w.symbol, .blue)
         }
     }
@@ -988,7 +982,7 @@ struct IslandView: View {
         case .nowPlaying: return "Now Playing"
         case .charging: return "Battery"
         case .notification(let n): return n.appName
-        case .focus: return "Focus"
+        case .focus(let f): return f.mode
         case .weather: return "Weather"
         }
     }
@@ -1252,9 +1246,14 @@ struct FocusExpandedView: View {
                                          startPoint: .topLeading,
                                          endPoint: .bottomTrailing))
                     .frame(width: 56, height: 56)
-                Image(systemName: "moon.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(.white)
+                if FocusMonitor.isSFSymbol(activity.symbol) {
+                    Image(systemName: activity.symbol)
+                        .font(.system(size: 24))
+                        .foregroundColor(.white)
+                } else {
+                    Text(activity.symbol)
+                        .font(.system(size: 28))
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(activity.mode)
@@ -1450,14 +1449,7 @@ struct BatteryRing: View {
     }
 }
 
-// MARK: - Preferences
-
-private struct SizeKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = nextValue()
-    }
-}
+// MARK: - Shape
 
 /// Camera-housing profile: nearly square top edge, fully round bottom.
 /// Top and bottom radii interpolate, so the pill <-> card morph is smooth.
