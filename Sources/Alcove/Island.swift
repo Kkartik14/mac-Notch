@@ -34,7 +34,6 @@ func islandClosedWidth() -> CGFloat {
 // MARK: - Activity types
 
 enum IslandActivity: Equatable, Identifiable {
-    case timer(TimerActivity)
     case nowPlaying(NowPlayingActivity)
     case charging(ChargingActivity)
     case notification(NotificationActivity)
@@ -43,32 +42,12 @@ enum IslandActivity: Equatable, Identifiable {
 
     var id: String {
         switch self {
-        case .timer: return "timer"
         case .nowPlaying: return "nowPlaying"
         case .charging: return "charging"
         case .notification: return "notification"
         case .focus: return "focus"
         case .weather: return "weather"
         }
-    }
-}
-
-struct TimerActivity: Equatable {
-    var totalSeconds: Int
-    var remainingSeconds: Int
-    var endDate: Date?
-    var label: String
-    var isPaused: Bool = false
-
-    init(seconds: Int, label: String = "Timer") {
-        self.totalSeconds = seconds
-        self.remainingSeconds = seconds
-        self.label = label
-    }
-
-    var progress: Double {
-        guard totalSeconds > 0 else { return 0 }
-        return Double(totalSeconds - remainingSeconds) / Double(totalSeconds)
     }
 }
 
@@ -99,6 +78,8 @@ struct NotificationActivity: Equatable {
     var sender: String
     var body: String
     var icon: String
+    /// Real app icon PNG bytes when resolvable; view falls back to `icon`.
+    var appIconData: Data? = nil
 }
 
 struct FocusActivity: Equatable {
@@ -127,12 +108,10 @@ final class IslandCenter: ObservableObject {
     var deliver: ((IslandActivity) -> Void)?
 
     /// Priority (higher = shows on top). Ambient order: music > focus >
-    /// charging > weather. Timer countdown and transient notifications pin
-    /// above — say so to change.
+    /// charging > weather. Transient notifications pin above — say so to change.
     static func rank(of activity: IslandActivity) -> Int {
         switch activity {
-        case .notification: return 5
-        case .timer: return 4
+        case .notification: return 4
         case .nowPlaying: return 3
         case .focus: return 2
         case .charging: return 1
@@ -157,21 +136,16 @@ final class IslandCenter: ObservableObject {
         collapseWorkItems.values.forEach { $0.cancel() }
     }
 
-    /// Tick while a live timer exists OR music is playing (for smooth
-    /// second-by-second progress). Previously a 1Hz timer ran forever even
-    /// when idle — a pointless wakeup 99% of the time.
+    /// Tick while music is playing (for smooth second-by-second progress).
+    /// Previously a 1Hz timer ran forever even when idle — a pointless
+    /// wakeup 99% of the time.
     private func ensureTicking() {
         var needsTick = false
         for island in islands {
-            switch island {
-            case let .timer(t) where !t.isPaused && t.endDate != nil:
+            if case let .nowPlaying(n) = island, n.isPlaying, n.duration > 0 {
                 needsTick = true
-            case let .nowPlaying(n) where n.isPlaying && n.duration > 0:
-                needsTick = true
-            default:
                 break
             }
-            if needsTick { break }
         }
         if needsTick {
             if tickTimer == nil {
@@ -273,39 +247,6 @@ final class IslandCenter: ObservableObject {
         toggleExpand(top.id)
     }
 
-    // MARK: Timer controls (device-clock based)
-
-    /// Pause/resume the live timer. Resume re-anchors `endDate` to the device
-    /// clock so the countdown stays accurate across pauses and sleep.
-    func pauseResumeTimer() {
-        guard let idx = islands.firstIndex(where: { $0.id == "timer" }),
-              case var .timer(t) = islands[idx] else { return }
-        if t.isPaused {
-            t.isPaused = false
-            t.endDate = Date().addingTimeInterval(TimeInterval(max(0, t.remainingSeconds)))
-        } else {
-            if let end = t.endDate {
-                t.remainingSeconds = max(0, Int(end.timeIntervalSince(Date()).rounded(.up)))
-            }
-            t.isPaused = true
-        }
-        islands[idx] = .timer(t)
-        ensureTicking()
-    }
-
-    func addMinuteToTimer() {
-        guard let idx = islands.firstIndex(where: { $0.id == "timer" }),
-              case var .timer(t) = islands[idx] else { return }
-        t.totalSeconds += 60
-        t.remainingSeconds += 60
-        if !t.isPaused {
-            t.endDate = (t.endDate ?? Date()).addingTimeInterval(60)
-        }
-        islands[idx] = .timer(t)
-    }
-
-    func cancelTimer() { dismiss("timer") }
-
     /// Cache the latest battery level for pills (focus trailing shows it).
     func updateBatteryLevel(_ level: Double) {
         if batteryLevel != level { batteryLevel = level }
@@ -342,19 +283,8 @@ final class IslandCenter: ObservableObject {
     }
 
     private func tick() {
-        let now = Date()
-        var toDismiss: String?
         for idx in islands.indices {
-            switch islands[idx] {
-            case var .timer(t) where !t.isPaused:
-                guard let end = t.endDate else { continue }
-                let remaining = max(0, Int(end.timeIntervalSince(now).rounded(.up)))
-                if remaining != t.remainingSeconds {
-                    t.remainingSeconds = remaining
-                    islands[idx] = .timer(t)
-                }
-                if remaining == 0 { toDismiss = islands[idx].id }
-            case var .nowPlaying(n) where n.isPlaying && n.duration > 0:
+            if case var .nowPlaying(n) = islands[idx], n.isPlaying, n.duration > 0 {
                 // Local 1Hz interpolation so seconds + bar move smoothly
                 // between the monitor's 3s corrections.
                 let next = min(n.duration, n.elapsed + 1)
@@ -362,11 +292,8 @@ final class IslandCenter: ObservableObject {
                     n.elapsed = next
                     islands[idx] = .nowPlaying(n)
                 }
-            default:
-                break
             }
         }
-        if let id = toDismiss { dismiss(id) }
     }
 }
 
@@ -616,7 +543,6 @@ final class IslandWindowController: NSObject {
 /// Actions reachable from the island's right-click menu.
 /// Wired by the app delegate; default no-ops keep previews/tests safe.
 struct IslandActions {
-    var showTimer: () -> Void = {}
     var showNowPlaying: () -> Void = {}
     var showCharging: () -> Void = {}
     var showNotification: () -> Void = {}
@@ -625,7 +551,6 @@ struct IslandActions {
     var previewPillMusic: () -> Void = {}
     var previewPillWeather: () -> Void = {}
     var previewPillCharging: () -> Void = {}
-    var previewPillTimer: () -> Void = {}
     var previewPillNotify: () -> Void = {}
     var previewPillFocus: () -> Void = {}
     var expandTop: () -> Void = {}
@@ -708,7 +633,6 @@ struct IslandView: View {
         // through to whatever is behind the island.
         .contentShape(NotchShape(topRadius: backdropTop, bottomRadius: backdropBottom))
         .contextMenu {
-            Button("Timer · 60s") { actions.showTimer() }
             Button("Now Playing") { actions.showNowPlaying() }
             Button("Charging") { actions.showCharging() }
             Button("Notification") { actions.showNotification() }
@@ -718,7 +642,6 @@ struct IslandView: View {
             Button("Pill · Music") { actions.previewPillMusic() }
             Button("Pill · Weather") { actions.previewPillWeather() }
             Button("Pill · Charging") { actions.previewPillCharging() }
-            Button("Pill · Timer") { actions.previewPillTimer() }
             Button("Pill · Notify") { actions.previewPillNotify() }
             Button("Pill · Focus") { actions.previewPillFocus() }
             Divider()
@@ -827,10 +750,6 @@ struct IslandView: View {
         case .nowPlaying(let n):
             SpectrumBars(playing: n.isPlaying)
                 .frame(width: 24, height: 20)
-        case .timer(let t):
-            Text(timeString(seconds: t.remainingSeconds))
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(.white.opacity(0.85))
         case .charging(let c):
             Text("\(Int((c.level * 100).rounded()))")
                 .font(.system(size: 11, weight: .semibold))
@@ -870,14 +789,25 @@ struct IslandView: View {
     }
 
     private func inlineDot(for activity: IslandActivity) -> some View {
+        // Real app icon wins over the generic dot (notifications).
+        if case .notification(let n) = activity,
+           let data = n.appIconData, let img = NSImage(data: data) {
+            return AnyView(
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 20, height: 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            )
+        }
         let (iconName, color) = iconSpec(for: activity)
-        return ZStack {
+        return AnyView(ZStack {
             Circle().fill(color.opacity(0.95)).frame(width: 18, height: 18)
             Image(systemName: iconName)
                 .foregroundColor(.white)
                 .font(.system(size: 9, weight: .bold))
         }
-        .frame(width: 20, height: 20)
+        .frame(width: 20, height: 20))
     }
 
     private func smallSplitPill(for activity: IslandActivity) -> some View {
@@ -932,12 +862,6 @@ struct IslandView: View {
                 center?.onSeek?(seconds)
             }
         )
-        case .timer(let t): TimerExpandedView(
-            activity: t,
-            onCancel: { center.cancelTimer() },
-            onPauseResume: { center.pauseResumeTimer() },
-            onAddMinute: { center.addMinuteToTimer() }
-        )
         case .charging(let c): ChargingExpandedView(activity: c)
         case .notification(let n): NotificationExpandedView(activity: n)
         case .focus(let f): FocusExpandedView(activity: f)
@@ -954,6 +878,13 @@ struct IslandView: View {
                 Circle().fill(Color.indigo.opacity(0.95)).frame(width: size, height: size)
                 Text(f.symbol).font(.system(size: size * 0.55))
             }
+        } else if case .notification(let n) = activity,
+                  let data = n.appIconData, let img = NSImage(data: data) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
         } else {
             let (name, color) = iconSpec(for: activity)
             ZStack {
@@ -967,7 +898,6 @@ struct IslandView: View {
 
     private func iconSpec(for activity: IslandActivity) -> (String, Color) {
         switch activity {
-        case .timer: return ("timer", .orange)
         case .nowPlaying: return ("music.note", .pink)
         case .charging: return ("bolt.fill", .green)
         case .notification: return ("message.fill", .purple)
@@ -978,7 +908,6 @@ struct IslandView: View {
 
     private func title(for activity: IslandActivity) -> String {
         switch activity {
-        case .timer: return "Timer"
         case .nowPlaying: return "Now Playing"
         case .charging: return "Battery"
         case .notification(let n): return n.appName
@@ -990,7 +919,6 @@ struct IslandView: View {
     @ViewBuilder
     private func text(for activity: IslandActivity, expanded: Bool, size: CGFloat) -> some View {
         switch activity {
-        case .timer(let t): Text(t.label).font(.system(size: size, weight: .semibold))
         case .nowPlaying(let n): Text(n.title).font(.system(size: size, weight: .semibold))
         case .charging(let c): Text(expanded ? "Charging" : "\(Int((c.level * 100).rounded()))%").font(.system(size: size, weight: .semibold))
         case .notification(let n): Text(n.sender).font(.system(size: size, weight: .semibold))
@@ -1148,38 +1076,6 @@ struct TransportButton: View {    let systemImage: String
     }
 }
 
-struct TimerExpandedView: View {
-    let activity: TimerActivity
-    var onCancel: () -> Void = {}
-    var onPauseResume: () -> Void = {}
-    var onAddMinute: () -> Void = {}
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text(timeString(seconds: activity.remainingSeconds))
-                .font(.system(size: 44, weight: .light, design: .rounded))
-                .foregroundColor(.white)
-                .monospacedDigit()
-            ProgressBar(progress: activity.progress)
-                .frame(height: 4)
-            HStack(spacing: 10) {
-                CapsuleButton(title: "Cancel", systemImage: "xmark", action: onCancel)
-                CapsuleButton(title: "+1 Min", systemImage: "plus", action: onAddMinute)
-                CapsuleButton(title: activity.isPaused ? "Resume" : "Pause",
-                              systemImage: activity.isPaused ? "play.fill" : "pause.fill",
-                              action: onPauseResume)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func timeString(seconds: Int) -> String {
-        let m = seconds / 60
-        let s = seconds % 60
-        return String(format: "%02d:%02d", m, s)
-    }
-}
-
 struct ChargingExpandedView: View {
     let activity: ChargingActivity
 
@@ -1211,15 +1107,23 @@ struct NotificationExpandedView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(colors: [.purple, .pink],
-                                         startPoint: .topLeading,
-                                         endPoint: .bottomTrailing))
+            if let data = activity.appIconData, let img = NSImage(data: data) {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: 40, height: 40)
-                Image(systemName: activity.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(colors: [.purple, .pink],
+                                             startPoint: .topLeading,
+                                             endPoint: .bottomTrailing))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: activity.icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(activity.sender)

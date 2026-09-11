@@ -11,66 +11,6 @@ final class IslandCenterTests: XCTestCase {
         XCTAssertNil(c.expandedId)
     }
 
-    func testShortTimerAutoDismissesAtZero() {
-        let c = IslandCenter()
-        var t = TimerActivity(seconds: 2, label: "Timer")
-        t.endDate = Date().addingTimeInterval(2)
-        c.present(.timer(t), autoDismissAfter: nil, expand: true)
-        XCTAssertEqual(c.expandedId, "timer")
-        RunLoop.main.run(until: Date().addingTimeInterval(3.5))
-        XCTAssertTrue(c.islands.isEmpty, "timer must dismiss itself at zero")
-        XCTAssertNil(c.expandedId)
-    }
-
-    func testTimerPauseFreezesAndResumeReanchorsToDeviceClock() {
-        let c = IslandCenter()
-        var t = TimerActivity(seconds: 60, label: "Timer")
-        t.endDate = Date().addingTimeInterval(60)
-        c.present(.timer(t), autoDismissAfter: nil, expand: true)
-
-        c.pauseResumeTimer()
-        guard case .timer(let paused) = c.islands.first(where: { $0.id == "timer" })! else {
-            return XCTFail("timer missing")
-        }
-        XCTAssertTrue(paused.isPaused)
-        let frozen = paused.remainingSeconds
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
-        guard case .timer(let still) = c.islands.first(where: { $0.id == "timer" })! else {
-            return XCTFail("timer missing")
-        }
-        XCTAssertEqual(still.remainingSeconds, frozen, "paused timer must not tick")
-
-        c.pauseResumeTimer()
-        guard case .timer(let resumed) = c.islands.first(where: { $0.id == "timer" })! else {
-            return XCTFail("timer missing")
-        }
-        XCTAssertFalse(resumed.isPaused)
-        XCTAssertNotNil(resumed.endDate, "resume must re-anchor endDate to the device clock")
-    }
-
-    func testTimerAddMinuteExtends() {
-        let c = IslandCenter()
-        var t = TimerActivity(seconds: 60, label: "Timer")
-        t.endDate = Date().addingTimeInterval(60)
-        c.present(.timer(t), autoDismissAfter: nil, expand: true)
-        c.pauseResumeTimer() // pause so remaining is deterministic
-        guard case .timer(let before) = c.islands.first! else { return XCTFail() }
-        c.addMinuteToTimer()
-        guard case .timer(let after) = c.islands.first! else { return XCTFail() }
-        XCTAssertEqual(after.totalSeconds, before.totalSeconds + 60)
-        XCTAssertEqual(after.remainingSeconds, before.remainingSeconds + 60)
-    }
-
-    func testTimerCancelClears() {
-        let c = IslandCenter()
-        var t = TimerActivity(seconds: 60, label: "Timer")
-        t.endDate = Date().addingTimeInterval(60)
-        c.present(.timer(t), autoDismissAfter: nil, expand: true)
-        c.cancelTimer()
-        XCTAssertTrue(c.islands.isEmpty)
-        XCTAssertNil(c.expandedId)
-    }
-
     func testCollapseKeepsActivityAlive() {
         let c = IslandCenter()
         c.present(.notification(NotificationActivity(appName: "A", sender: "B", body: "C", icon: "m")),
@@ -148,12 +88,6 @@ final class IslandCenterTests: XCTestCase {
         XCTAssertEqual(n.progress, 0.25, accuracy: 0.001)
         let zero = NowPlayingActivity(title: "T", artist: "A", isPlaying: false)
         XCTAssertEqual(zero.progress, 0)
-    }
-
-    func testTimerProgressMath() {
-        var t = TimerActivity(seconds: 60, label: "T")
-        t.remainingSeconds = 15
-        XCTAssertEqual(t.progress, 0.75, accuracy: 0.001)
     }
 }
 
@@ -272,6 +206,33 @@ final class PriorityTests: XCTestCase {
         XCTAssertEqual(c.islands.last?.id, "charging")
         c.applyPriorityOrder()
         XCTAssertEqual(c.islands.map(\.id), ["charging", "nowPlaying"])
+    }
+}
+
+// MARK: - Notification parsing
+
+final class NotificationParseTests: XCTestCase {
+    private func samplePayload() -> Data {
+        let req: [String: Any] = [
+            "titl": "Cutu Prii", "subt": "2 messages",
+            "body": "Bitch behaviour", "cate": "x",
+        ]
+        let plist: [String: Any] = [
+            "app": "com.apple.MobileSMS", "date": 810576430.6, "req": req,
+        ]
+        return try! PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+    }
+
+    func testParsesTitleSubtitleBody() {
+        let note = NotificationMonitor.parse(data: samplePayload(), appIdentifier: "com.apple.MobileSMS")!
+        XCTAssertEqual(note.title, "Cutu Prii")
+        XCTAssertEqual(note.subtitle, "2 messages")
+        XCTAssertEqual(note.body, "Bitch behaviour")
+        XCTAssertEqual(note.appIdentifier, "com.apple.MobileSMS")
+    }
+
+    func testRejectsGarbage() {
+        XCTAssertNil(NotificationMonitor.parse(data: Data([0, 1, 2, 3]), appIdentifier: "x"))
     }
 }
 
