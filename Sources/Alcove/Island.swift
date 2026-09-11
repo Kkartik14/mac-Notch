@@ -60,11 +60,28 @@ struct NowPlayingActivity: Equatable {
     var elapsed: TimeInterval = 0
     var duration: TimeInterval = 0
     var artworkData: Data?
+    var upNext: [UpNextItem] = []
+    /// Fallback rail when the queue is hidden (catalog/autoplay playback):
+    /// Music's own recent plays, tap to replay. From PlaybackSessions.
+    var recent: [PlaybackHistoryMonitor.Track] = []
 
     var progress: Double {
         guard duration > 0 else { return 0 }
         return min(1, max(0, elapsed / duration))
     }
+}
+
+struct UpNextItem: Equatable {
+    var title: String
+    var artist: String
+    /// Remote thumbnail URL (Store path). Downloaded after delivery.
+    var artworkURL: String? = nil
+    var artData: Data? = nil
+    /// Library-context replay address (scripting tier): playlist + index.
+    var playlistID: String? = nil
+    var trackIndex: Int? = nil
+    /// Catalog deep link (session tier): music://… opens the track page.
+    var url: String? = nil
 }
 
 struct ChargingActivity: Equatable {
@@ -125,6 +142,10 @@ final class IslandCenter: ObservableObject {
     var onPreviousTrack: (() -> Void)?
     /// Seek callback (seconds), wired to the monitor's transport.
     var onSeek: ((TimeInterval) -> Void)?
+    /// Play a queued track in place, wired by the app delegate.
+    var onPlayQueued: ((UpNextItem) -> Void)?
+    /// Tap on a played-recently row; app decides how to replay.
+    var onReplayRecent: ((PlaybackHistoryMonitor.Track) -> Void)?
 
     private var autoDismissWorkItems: [String: DispatchWorkItem] = [:]
     private var collapseWorkItems: [String: DispatchWorkItem] = [:]
@@ -164,13 +185,22 @@ final class IslandCenter: ObservableObject {
     /// `expand: true` with `collapseAfter` so the card opens, then settles
     /// back to its pill while the activity stays live.
     func present(_ activity: IslandActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
-        if let idx = islands.firstIndex(where: { $0.id == activity.id }) {
-            islands[idx] = activity
+        let idx: Int
+        if let existing = islands.firstIndex(where: { $0.id == activity.id }) {
+            islands[existing] = activity
+            idx = existing
         } else {
             // Ordered insert: higher rank sits closer to the top (end).
             let pos = islands.firstIndex { Self.rank(of: $0) > Self.rank(of: activity) } ?? islands.endIndex
             islands.insert(activity, at: pos)
             if islands.count > 4 { islands.removeFirst(islands.count - 4) }
+            idx = pos
+        }
+        // Fresh nowPlaying cards carry no history (independent source);
+        // re-attach the cached recents so the fallback rail survives.
+        if case var .nowPlaying(n) = islands[idx], n.recent.isEmpty, !latestRecent.isEmpty {
+            n.recent = latestRecent
+            islands[idx] = .nowPlaying(n)
         }
         if expand { expandedId = activity.id }
         autoDismissWorkItems[activity.id]?.cancel()
@@ -259,6 +289,39 @@ final class IslandCenter: ObservableObject {
               case var .nowPlaying(n) = islands[idx] else { return }
         n.artworkData = data
         islands[idx] = .nowPlaying(n)
+    }
+
+    /// Attach the Up Next queue silently (arrives after the card pops).
+    func updateNowPlayingQueue(_ items: [UpNextItem]) {
+        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = islands[idx] else { return }
+        if n.upNext != items {
+            n.upNext = items
+            islands[idx] = .nowPlaying(n)
+        }
+    }
+
+    /// Latest recent-tracks list. The history source is independent of the
+    /// music poll, so every fresh nowPlaying card starts without it — cache
+    /// here and re-attach in present() or the rail vanishes on track change.
+    private var latestRecent: [PlaybackHistoryMonitor.Track] = []
+
+    /// Attach recent plays silently (fallback rail for hidden queues).
+    func updateNowPlayingRecent(_ tracks: [PlaybackHistoryMonitor.Track]) {
+        latestRecent = tracks
+        applyRecentToCard(tracks)
+    }
+
+    private func applyRecentToCard(_ tracks: [PlaybackHistoryMonitor.Track]) {
+        guard let idx = islands.firstIndex(where: { $0.id == "nowPlaying" }),
+              case var .nowPlaying(n) = islands[idx] else { return }
+        // The newest archive often IS the current track — drop it so the
+        // rail only shows what came before the card's song.
+        let filtered = tracks.filter { $0.title != n.title }
+        if n.recent != filtered {
+            n.recent = filtered
+            islands[idx] = .nowPlaying(n)
+        }
     }
 
     /// Silent progress correction from the monitor (3s poll). Updates the
@@ -719,6 +782,26 @@ struct IslandView: View {
         }
     }
 
+    /// Real player app icon (Music/Spotify), no circle. Nil when the app
+    /// can't be resolved — caller falls back to the generic dot.
+    private func playerAppIcon(for appName: String, size: CGFloat) -> AnyView? {
+        let bundleID: String
+        switch appName {
+        case "Spotify": bundleID = "com.spotify.client"
+        default: bundleID = "com.apple.Music"
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
+        let img = NSWorkspace.shared.icon(forFile: url.path)
+        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        return AnyView(
+            Image(decorative: cg, scale: 1.0)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        )
+    }
+
     @ViewBuilder
     private func inlineLeading(for activity: IslandActivity) -> some View {
         switch activity {
@@ -860,6 +943,11 @@ struct IslandView: View {
                 // Jump locally for instant feedback; monitor corrects drift.
                 center?.updateNowPlayingProgress(elapsed: seconds, duration: n.duration, isPlaying: n.isPlaying)
                 center?.onSeek?(seconds)
+            },
+            onPlayQueued: { center.onPlayQueued?($0) },
+            onReplay: { [weak center] track in
+                NSLog("[Alcove] ui: replay tapped: %@", track.title)
+                center?.onReplayRecent?(track)
             }
         )
         case .charging(let c): ChargingExpandedView(activity: c)
@@ -873,7 +961,9 @@ struct IslandView: View {
 
     @ViewBuilder
     private func icon(for activity: IslandActivity, size: CGFloat) -> some View {
-        if case .focus(let f) = activity, !FocusMonitor.isSFSymbol(f.symbol) {
+        if case .nowPlaying(let n) = activity, let img = playerAppIcon(for: n.appName, size: size) {
+            img
+        } else if case .focus(let f) = activity, !FocusMonitor.isSFSymbol(f.symbol) {
             ZStack {
                 Circle().fill(Color.indigo.opacity(0.95)).frame(width: size, height: size)
                 Text(f.symbol).font(.system(size: size * 0.55))
@@ -942,6 +1032,8 @@ struct NowPlayingExpandedView: View {
     var onNext: () -> Void = {}
     var onPrevious: () -> Void = {}
     var onSeek: (TimeInterval) -> Void = { _ in }
+    var onPlayQueued: (UpNextItem) -> Void = { _ in }
+    var onReplay: (PlaybackHistoryMonitor.Track) -> Void = { _ in }
     @State private var dragFraction: Double?
 
     /// Elapsed shown while dragging (instant feedback), else live value.
@@ -975,7 +1067,7 @@ struct NowPlayingExpandedView: View {
                         Text(timeString(seconds: Int(shownElapsed)))
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .foregroundColor(.white.opacity(0.6))
-                        SeekBar(progress: shownProgress,
+                        SeekBar(progress: shownProgress, tint: .red,
                                 onScrub: { f in dragFraction = f },
                                 onRelease: { f in
                                     NSLog("[Alcove] ui: seek to %.1fs", f * activity.duration)
@@ -1004,7 +1096,141 @@ struct NowPlayingExpandedView: View {
                 }
                 .padding(.top, 2)
             }
+            if !activity.upNext.isEmpty {
+                upNextRail
+            } else if !activity.recent.isEmpty {
+                recentRail
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// Up Next rail tile: real thumbnail when downloaded, dark note tile
+    /// while loading (or when the scripting path has no URL).
+    private func upNextTile(for item: UpNextItem) -> some View {
+        Group {
+            if let data = item.artData, let img = NSImage(data: data) {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                LinearGradient(colors: [.white.opacity(0.10), .white.opacity(0.04)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.5))
+                    )
+            }
+        }
+        .frame(width: 36, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+    private var upNextRail: some View {
+        HStack(spacing: 0) {
             Spacer(minLength: 0)
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 1)
+                .padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("UP NEXT")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundColor(.white.opacity(0.5))
+                    .padding(.bottom, 8)
+                ForEach(Array(activity.upNext.prefix(3).enumerated()), id: \.offset) { _, item in
+                    HStack(spacing: 8) {
+                        upNextTile(for: item)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            Text(item.artist)
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundColor(.white.opacity(0.55))
+                                .lineLimit(1)
+                        }
+                    }
+                    .padding(.bottom, 8)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        NSLog("[Alcove] ui: queue tap %@", item.title)
+                        onPlayQueued(item)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(width: 200, alignment: .leading)
+            .padding(.leading, 14)
+        }
+    }
+
+    /// Fallback rail when the queue is hidden (catalog/autoplay playback):
+    /// recent plays from Music's session archives, tap to replay.
+    private var recentRail: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 1)
+                .padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("PLAYED RECENTLY")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundColor(.white.opacity(0.5))
+                    .padding(.bottom, 8)
+                ForEach(Array(activity.recent.prefix(3).enumerated()), id: \.offset) { _, item in
+                    Button(action: { onReplay(item) }) {
+                        HStack(alignment: .center, spacing: 8) {
+                            recentArtwork(for: item)
+                                .frame(width: 36, height: 36)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.title)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                                    .multilineTextAlignment(.leading)
+                                Text(item.artist)
+                                    .font(.system(size: 11, weight: .regular))
+                                    .foregroundColor(.white.opacity(0.55))
+                                    .lineLimit(1)
+                                    .multilineTextAlignment(.leading)
+                            }
+                        }
+                        .padding(.bottom, 8)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(width: 200, alignment: .leading)
+            .padding(.leading, 14)
+        }
+    }
+
+    /// 36pt album art for a history row: CDN thumb when downloaded,
+    /// soft gradient note placeholder while it loads / when absent.
+    @ViewBuilder
+    private func recentArtwork(for item: PlaybackHistoryMonitor.Track) -> some View {
+        if let data = item.artworkData, let img = NSImage(data: data) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        } else {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(LinearGradient(colors: [.gray.opacity(0.6), .gray.opacity(0.25)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay(
+                    Image(systemName: "music.note")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.6))
+                )
         }
     }
 

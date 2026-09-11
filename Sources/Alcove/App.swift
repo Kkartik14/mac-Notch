@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let weatherMonitor = WeatherMonitor()
     private let focusMonitor = FocusMonitor()
     private let notificationMonitor = NotificationMonitor()
+    private let historyMonitor = PlaybackHistoryMonitor()
     private var wasPluggedIn = false
 
     /// Transport routing: the player that is currently playing owns the
@@ -47,6 +48,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         musicMonitor.seek(to: seconds)
     }
+
+    /// Play a queued rail row in place. Library context (playlist + index)
+    /// plays directly inside Music; catalog rows fall back to opening the
+    /// track page (scripting cannot address catalog tracks).
+    private func playQueued(_ item: UpNextItem) {
+        if let pid = item.playlistID, let idx = item.trackIndex {
+            NSLog("[Alcove] music: play queued track %d of playlist %@", idx, pid)
+            let source = """
+            tell application "Music"
+              try
+                play track \(idx) of (first playlist whose persistent ID is "\(pid)")
+              on error err
+                return "ERR:" & err
+              end try
+            end tell
+            """
+            var error: NSDictionary?
+            let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
+            if let error { NSLog("[Alcove] music: play-queued error: %@", error) }
+            _ = result
+            musicMonitor.refresh()
+            return
+        }
+        // Catalog row: open the track page; playback stays where it is.
+        if var u = item.url, u.hasPrefix("https://") {
+            u = "music://" + u.dropFirst(8)
+            if let url = URL(string: u) {
+                NSLog("[Alcove] music: open queued track %@", item.title)
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            NSLog("[Alcove] music: queued row not playable (%@)", item.title)
+        }
+    }
     /// After one source goes quiet: keep whichever source still has a
     /// playing track (quietly), else drop the card.
     private func resolveNowPlayingAfterClear() {
@@ -57,6 +92,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             island.center.dismiss("nowPlaying")
         }
+    }
+
+    /// Session queue wins for the track it belongs to (true play order,
+    /// incl. curated mixes). Scripting/store tiers apply only when no
+    /// session queue was set for the on-screen track — never overwrite
+    /// truth with guesses.
+    private var sessionQueueSig: String?
+    private func trackSig(of n: NowPlayingActivity) -> String { "\(n.title)|\(n.artist)" }
+    private func islandTrackSig() -> String? {
+        guard case .nowPlaying(let n) = island.center.islands.first(where: { $0.id == "nowPlaying" }) else { return nil }
+        return trackSig(of: n)
+    }
+    private func applySessionQueue(_ items: [UpNextItem], contextTitle: String) {
+        guard island.center.islands.contains(where: {
+            if case .nowPlaying(let n) = $0 { return n.appName == "Music" }
+            return false
+        }) else { return }
+        // Staleness gate: walk-back can land on an older context than what's
+        // playing. A queue whose context track isn't on screen is dropped —
+        // a wrong queue is worse than the history fallback.
+        if let playing = islandTrackSig().map({ trackTitle(of: $0) }),
+           !contextTitle.isEmpty,
+           !PlaybackHistoryMonitor.sameTrack(playing, contextTitle) {
+            NSLog("[Alcove] queue: dropped stale context %@ (playing %@)", contextTitle, playing)
+            return
+        }
+        sessionQueueSig = islandTrackSig()
+        island.center.updateNowPlayingQueue(items)
+    }
+
+    private func trackTitle(of sig: String) -> String {
+        // sig is "title|artist".
+        String(sig.split(separator: "|", maxSplits: 1).first ?? "")
+    }
+    private func applyTierQueue(_ items: [UpNextItem]) {
+        // A session queue already set for this exact track wins; stale tier
+        // results (slower async) must not clobber it.
+        if let sig = islandTrackSig(), sig == sessionQueueSig { return }
+        island.center.updateNowPlayingQueue(items)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -93,6 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         island.center.onNextTrack = { [weak self] in self?.routeNext() }
         island.center.onPreviousTrack = { [weak self] in self?.routePrev() }
         island.center.onSeek = { [weak self] in self?.routeSeek($0) }
+        island.center.onPlayQueued = { [weak self] in self?.playQueued($0) }
+        island.center.onReplayRecent = { [weak self] track in
+            self?.replayRecent(track)
+        }
 
         // Now Playing — track changes pop the card open and it STAYS open
         // until dismissed. No auto-collapse: collapsing on its own is what
@@ -116,6 +194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         musicMonitor.onProgress = { [weak self] elapsed, duration, isPlaying in
             self?.island.center.updateNowPlayingProgress(elapsed: elapsed, duration: duration, isPlaying: isPlaying)
+        }
+        musicMonitor.onQueue = { [weak self] items in
+            self?.applyTierQueue(items)
         }
         musicMonitor.start()
 
@@ -181,6 +262,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         focusMonitor.start()
 
+        // Recently played — Music's session archives, zero permissions.
+        // Feeds the fallback rail when the live queue is hidden.
+        historyMonitor.onTracksChanged = { [weak self] tracks in
+            self?.island.center.updateNowPlayingRecent(tracks)
+        }
+        // True queue order from the session checkpoint. Beats scripting and
+        // store guesses for the same track; gated on Music below.
+        historyMonitor.onQueueChanged = { [weak self] items, contextTitle in
+            self?.applySessionQueue(items, contextTitle: contextTitle)
+        }
+        historyMonitor.start()
+
         // Real notifications via store adapter (silent without FDA).
         // Quiet 3s pill only — never pops the card.
         notificationMonitor.onNew = { [weak self] note in
@@ -196,6 +289,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )), autoDismissAfter: 3, expand: false)
         }
         notificationMonitor.start()
+    }
+
+    /// Tap on a played-recently row. Store ID is recorded for future
+    /// signed-build replay (MusicKit); until then, open the track in Music
+    /// via its music:// deep link. Library/playlist tracks remain fully
+    /// replayable through the normal transport + Up Next path.
+    private func replayRecent(_ track: PlaybackHistoryMonitor.Track) {
+        if let url = track.musicAppURL {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSLog("[Alcove] replay: no url for %@", track.title)
+        }
     }
 
     private func makeContextMenu() -> NSMenu {
