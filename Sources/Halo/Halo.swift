@@ -1510,19 +1510,109 @@ struct CalendarExpandedView: View {
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 60)) { context in
-            VStack(alignment: .leading, spacing: 7) {
-                if activity.items.isEmpty {
-                    Text("No upcoming events or reminders")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.65))
-                } else {
-                    ForEach(activity.items.prefix(4)) { item in
-                        calendarRow(item, now: context.date)
+            calendarContent(now: context.date)
+        }
+    }
+
+    @ViewBuilder
+    private func calendarContent(now: Date) -> some View {
+        if let next = activity.nextItem {
+            HStack(alignment: .top, spacing: 18) {
+                upNextColumn(now: now)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: 1)
+
+                nextItemColumn(next, now: now)
+                    .frame(width: 245, alignment: .topLeading)
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        } else {
+            Text("No upcoming events or reminders")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.white.opacity(0.65))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+
+    private var upNextItems: [CalendarItem] {
+        Array(activity.items.dropFirst())
+    }
+
+    @ViewBuilder
+    private func upNextColumn(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionLabel("UP NEXT")
+
+            if upNextItems.isEmpty {
+                Text("Nothing else scheduled")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.38))
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(upNextItems) { item in
+                            calendarRow(item, now: now)
+                        }
                     }
                 }
+                .frame(maxHeight: 112)
+                .scrollIndicators(.automatic)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func nextItemColumn(_ item: CalendarItem, now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("NEXT")
+
+            Text(CalendarMonitor.compactStatus(for: item, now: now))
+                .font(.system(size: 31, weight: .bold))
+                .foregroundColor(item.isReminder ? .orange : .white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .padding(.top, 1)
+
+            Text(item.title)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.top, 6)
+
+            HStack(spacing: 5) {
+                Text(CalendarMonitor.exactTime(for: item, now: now))
+                if !item.calendarName.isEmpty {
+                    Text("·")
+                    Text(item.calendarName)
+                        .lineLimit(1)
+                }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.white.opacity(0.58))
+            .padding(.top, 3)
+
+            if let location = item.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !location.isEmpty {
+                Label(location, systemImage: "mappin.and.ellipse")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.42))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .bold))
+            .tracking(1.5)
+            .foregroundColor(.white.opacity(0.5))
     }
 
     private func calendarRow(_ item: CalendarItem, now: Date) -> some View {
@@ -1542,7 +1632,7 @@ struct CalendarExpandedView: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                 HStack(spacing: 5) {
-                    Text(CalendarMonitor.displayTime(for: item, now: now))
+                    Text(CalendarMonitor.exactTime(for: item, now: now))
                     if !item.calendarName.isEmpty {
                         Text("·")
                         Text(item.calendarName)
@@ -1556,6 +1646,12 @@ struct CalendarExpandedView: View {
             Spacer(minLength: 0)
 
             if item.isReminder {
+                if item.startDate < now {
+                    Text("DUE")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.orange)
+                }
+
                 Button {
                     onCompleteReminder(item.id)
                 } label: {

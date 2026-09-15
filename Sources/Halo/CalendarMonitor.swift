@@ -273,6 +273,15 @@ final class CalendarMonitor: NSObject {
             return "in \(minutes)m"
         }
 
+        return exactTime(for: item, now: now)
+    }
+
+    /// Full event time used in the expanded card's metadata.
+    static func exactTime(for item: CalendarItem, now: Date = Date()) -> String {
+        if item.isAllDay {
+            return "All day"
+        }
+
         let time = item.startDate.formatted(date: .omitted, time: .shortened)
         let calendar = Calendar.current
         if calendar.isDate(item.startDate, inSameDayAs: now) {

@@ -12,6 +12,7 @@ This file records user-visible changes. The project is currently in active devel
 - Added battery, weather, Focus, and notification monitors.
 - Added EventKit Calendar and Reminders support with one-tap reminder completion.
 - Added relative calendar timing, overdue reminder persistence, and a safe one-shot event-start card transition without duplicate native notifications.
+- Redesigned the expanded Calendar card with a fixed next-item panel and scrollable Up Next agenda.
 - Added activity priority, collapse, dismissal, and progress interpolation behavior.
 - Added parser, state, positioning, and host-safety tests.
 - Added tested release archive creation with checksum output and optional Developer ID signing/notarization hooks.
