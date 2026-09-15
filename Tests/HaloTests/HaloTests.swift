@@ -210,6 +210,10 @@ final class PriorityTests: XCTestCase {
         XCTAssertLessThan(HaloCenter.rank(of: .weather(WeatherActivity(temperatureC: 20, condition: "C", symbol: "s"))),
                           HaloCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))))
         XCTAssertLessThan(HaloCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))),
+                          HaloCenter.rank(of: .calendar(CalendarActivity(items: []))))
+        XCTAssertLessThan(HaloCenter.rank(of: .calendar(CalendarActivity(items: []))),
+                          HaloCenter.rank(of: .nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true))))
+        XCTAssertLessThan(HaloCenter.rank(of: .charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil))),
                           HaloCenter.rank(of: .focus(FocusActivity(mode: "M"))))
         XCTAssertLessThan(HaloCenter.rank(of: .focus(FocusActivity(mode: "M"))),
                           HaloCenter.rank(of: .nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true))))
@@ -220,7 +224,8 @@ final class PriorityTests: XCTestCase {
         c.present(.weather(WeatherActivity(temperatureC: 20, condition: "C", symbol: "s")), autoDismissAfter: nil, expand: false)
         c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: false)
         c.present(.charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil)), autoDismissAfter: nil, expand: false)
-        XCTAssertEqual(c.activities.map(\.id), ["weather", "charging", "nowPlaying"])
+        c.present(.calendar(CalendarActivity(items: [])), autoDismissAfter: nil, expand: false)
+        XCTAssertEqual(c.activities.map(\.id), ["weather", "charging", "calendar", "nowPlaying"])
     }
 
     func testPlugOverrideAndReturn() {

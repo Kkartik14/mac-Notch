@@ -26,6 +26,7 @@ Once a valid Developer ID certificate and notarization credentials are available
 - Music Up Next support, including direct playlist playback where Music exposes a playlist context.
 - Recently played Music tracks read from Music playback-session archives.
 - Battery level, charging state, and time-until-full information.
+- Upcoming Calendar events and incomplete Reminders, with one-tap reminder completion.
 - Weather from CoreLocation and Open-Meteo.
 - Live Focus mode and icon when the macOS Focus database is readable.
 - New notification activities from the macOS usernoted database when it is readable.
@@ -86,10 +87,12 @@ The tests cover activity-stack behavior, fixed-window positioning, priority orde
 The app starts with an idle Halo pill. Monitors then update a shared activity stack. The highest-priority activity is shown in the collapsed pill:
 
 ~~~text
-Notification → Now Playing → Focus → Charging → Weather
+Notification → Now Playing → Calendar/Focus → Charging → Weather
 ~~~
 
-Activities are updated in place by identifier, and the stack is capped at four entries. Track changes and Focus activation pop open their cards briefly before settling back to a live pill. A fresh plug-in temporarily promotes Charging. Notifications are transient; Music, Spotify, Focus, Battery, and Weather remain available until their source clears or the user dismisses them.
+Activities are updated in place by identifier, and the stack is capped at four entries. Track changes and Focus activation pop open their cards briefly before settling back to a live pill. A fresh plug-in temporarily promotes Charging. Notifications are transient; Music, Spotify, Calendar, Focus, Battery, and Weather remain available until their source clears or the user dismisses them.
+
+Calendar and Reminders are read through EventKit. Halo keeps the next seven days of events and incomplete reminders, including overdue reminders until they are completed. An EventKit change observer and one-minute refresh keep the activity current; a one-shot timer catches the next event start without high-frequency polling. Upcoming times become relative when useful, and a real event start gently expands the Calendar card once before settling back to its pill. The expanded card shows up to four items; tapping the circle beside a reminder marks it complete in the Reminders database. Halo does not create events or send a second system notification.
 
 The collapsed pill can be clicked to open the top activity. Hover-open requires cursor movement onto the visible shape. Transparent space around the pill/card passes input through to the application underneath.
 
@@ -114,6 +117,7 @@ Some capabilities depend on macOS TCC permissions:
 - Apple Events/Automation for reading and controlling Music and Spotify.
 - Location access for location-based weather.
 - Full Disk Access for live Focus state and the notification store.
+- Calendar and Reminders access for upcoming events, due reminders, and reminder completion.
 
 Halo does not run a backend or maintain its own database. It stores runtime state in memory, reads selected local macOS/media files, sends coordinates to Open-Meteo, and sends Music store IDs to the iTunes Lookup API when resolving queue metadata. See docs/permissions.md.
 
@@ -132,8 +136,9 @@ Halo does not run a backend or maintain its own database. It stores runtime stat
 | Sources/Halo/WeatherMonitor.swift | CoreLocation/Open-Meteo weather monitor. |
 | Sources/Halo/FocusMonitor.swift | Focus database reader and mode/icon decoder. |
 | Sources/Halo/NotificationMonitor.swift | Read-only SQLite notification-store adapter. |
+| Sources/Halo/CalendarMonitor.swift | EventKit events/reminders adapter and reminder completion. |
 | Sources/Halo/SettingsRootView.swift | Current minimal Settings window. |
-| Tests/HaloTests/HaloTests.swift | Unit and lightweight host integration tests. |
+| Tests/HaloTests/HaloTests.swift / CalendarTests.swift | Unit and lightweight host integration tests. |
 | bundle.sh | Release build and unsigned app-bundle creation. |
 | release.sh | Tested release archive creation with optional signing and notarization. |
 | Halo.entitlements / Sources/Halo/Resources/Info.plist | Runtime entitlements and bundle metadata. |
@@ -141,6 +146,8 @@ Halo does not run a backend or maintain its own database. It stores runtime stat
 ## Known limitations
 
 - The Settings window is currently informational; there are no persisted user settings.
+- Calendar shows events from the next seven days and incomplete reminders with due dates, limited to the first five items. A real event start expands the card once for four seconds; Halo does not currently create events, edit events, or send native calendar notifications. Calendar-list selection is not implemented.
+- Calendar and Reminders require separate macOS permissions. If either permission is denied, Halo continues with the source that remains available.
 - The Focus fallback displays a demo Do Not Disturb activity when live Focus data is unavailable. A manual Focus-mode picker is not implemented yet.
 - The context-menu Notification action is demo data. The notification monitor only emits rows created after it establishes its startup baseline.
 - Recent-track replay currently opens a Music deep link. The stored catalog ID is reserved for a future MusicKit-based playback path.

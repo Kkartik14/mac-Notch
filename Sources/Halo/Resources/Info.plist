@@ -22,5 +22,9 @@
     <string>Halo shows the current weather in the activity surface.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Halo reads the current track from Music and Spotify to show it in the activity surface.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Halo shows upcoming calendar events in the activity surface.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Halo shows upcoming reminders and lets you complete them from the activity surface.</string>
 </dict>
 </plist>

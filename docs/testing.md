@@ -44,7 +44,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 
 ## Test coverage
 
-[Tests/HaloTests/HaloTests.swift](../Tests/HaloTests/HaloTests.swift) currently covers:
+[Tests/HaloTests/HaloTests.swift](../Tests/HaloTests/HaloTests.swift) and [CalendarTests.swift](../Tests/HaloTests/CalendarTests.swift) currently cover:
 
 - Initial, collapsed, expanded, auto-dismissed, and capped activity stacks.
 - Fixed-window origin math and the anti-slide center/top-edge contract.
@@ -53,6 +53,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 - Weather condition-to-symbol mapping.
 - Playback-indicator state: paused playback selects a still indicator, while playing playback selects the animated indicator; progress updates also propagate the paused state.
 - Notification property-list decoding and malformed payload rejection.
+- Calendar/Reminders filtering, ordering, in-progress event retention, overdue-reminder persistence, relative time labels, start-boundary detection, and rail limits.
 - Music scripting queue payload parsing.
 - Playback progress and recent-track attachment behavior.
 - Gzip decoding, protobuf title/artist parsing, archive parsing, JSON extraction, and artwork URL normalization.

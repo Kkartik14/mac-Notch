@@ -10,6 +10,8 @@ This file records user-visible changes. The project is currently in active devel
 - Added progressive Apple Music/Spotify artwork and queue thumbnails.
 - Added fixed-window halo morphing and pass-through input routing.
 - Added battery, weather, Focus, and notification monitors.
+- Added EventKit Calendar and Reminders support with one-tap reminder completion.
+- Added relative calendar timing, overdue reminder persistence, and a safe one-shot event-start card transition without duplicate native notifications.
 - Added activity priority, collapse, dismissal, and progress interpolation behavior.
 - Added parser, state, positioning, and host-safety tests.
 - Added tested release archive creation with checksum output and optional Developer ID signing/notarization hooks.

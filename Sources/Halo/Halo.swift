@@ -39,6 +39,7 @@ enum HaloActivity: Equatable, Identifiable {
     case notification(NotificationActivity)
     case focus(FocusActivity)
     case weather(WeatherActivity)
+    case calendar(CalendarActivity)
 
     var id: String {
         switch self {
@@ -47,6 +48,7 @@ enum HaloActivity: Equatable, Identifiable {
         case .notification: return "notification"
         case .focus: return "focus"
         case .weather: return "weather"
+        case .calendar: return "calendar"
         }
     }
 }
@@ -125,13 +127,14 @@ final class HaloCenter: ObservableObject {
     @Published var batteryLevel: Double?
     var deliver: ((HaloActivity) -> Void)?
 
-    /// Priority (higher = shows on top). Ambient order: music > focus >
+    /// Priority (higher = shows on top). Ambient order: music > calendar/focus >
     /// charging > weather. Transient notifications pin above — say so to change.
     static func rank(of activity: HaloActivity) -> Int {
         switch activity {
         case .notification: return 4
         case .nowPlaying: return 3
         case .focus: return 2
+        case .calendar: return 2
         case .charging: return 1
         case .weather: return 0
         }
@@ -147,6 +150,8 @@ final class HaloCenter: ObservableObject {
     var onPlayQueued: ((UpNextItem) -> Void)?
     /// Tap on a played-recently row; app decides how to replay.
     var onReplayRecent: ((PlaybackHistoryMonitor.Track) -> Void)?
+    /// Complete a reminder from the expanded Calendar activity.
+    var onCompleteReminder: ((String) -> Void)?
 
     private var autoDismissWorkItems: [String: DispatchWorkItem] = [:]
     private var collapseWorkItems: [String: DispatchWorkItem] = [:]
@@ -612,11 +617,13 @@ struct HaloActions {
     var showNotification: () -> Void = {}
     var showWeather: () -> Void = {}
     var showFocus: () -> Void = {}
+    var showCalendar: () -> Void = {}
     var previewPillMusic: () -> Void = {}
     var previewPillWeather: () -> Void = {}
     var previewPillCharging: () -> Void = {}
     var previewPillNotify: () -> Void = {}
     var previewPillFocus: () -> Void = {}
+    var previewPillCalendar: () -> Void = {}
     var expandTop: () -> Void = {}
     var dismissAll: () -> Void = {}
     var openSettings: () -> Void = {}
@@ -702,12 +709,14 @@ struct HaloView: View {
             Button("Notification") { actions.showNotification() }
             Button("Weather Card") { actions.showWeather() }
             Button("Focus Card") { actions.showFocus() }
+            Button("Calendar") { actions.showCalendar() }
             Divider()
             Button("Pill · Music") { actions.previewPillMusic() }
             Button("Pill · Weather") { actions.previewPillWeather() }
             Button("Pill · Charging") { actions.previewPillCharging() }
             Button("Pill · Notify") { actions.previewPillNotify() }
             Button("Pill · Focus") { actions.previewPillFocus() }
+            Button("Pill · Calendar") { actions.previewPillCalendar() }
             Divider()
             Button("Expand") { actions.expandTop() }
             Button("Dismiss All") { actions.dismissAll() }
@@ -823,6 +832,8 @@ struct HaloView: View {
                 .frame(width: 20, height: 20)
         case .focus(let f):
             focusGlyph(for: f, size: 20)
+        case .calendar:
+            inlineDot(for: activity)
         default:
             inlineDot(for: activity)
         }
@@ -848,6 +859,18 @@ struct HaloView: View {
                 Text("\(Int((level * 100).rounded()))")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.white)
+            } else {
+                inlineDot(for: activity)
+            }
+        case .calendar(let c):
+            if let next = c.nextItem {
+                TimelineView(.periodic(from: Date(), by: 60)) { context in
+                    Text(CalendarMonitor.compactStatus(for: next, now: context.date))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .frame(width: 30, alignment: .trailing)
+                }
             } else {
                 inlineDot(for: activity)
             }
@@ -949,6 +972,13 @@ struct HaloView: View {
         case .notification(let n): NotificationExpandedView(activity: n)
         case .focus(let f): FocusExpandedView(activity: f)
         case .weather(let w): WeatherExpandedView(activity: w)
+        case .calendar(let c): CalendarExpandedView(
+            activity: c,
+            onCompleteReminder: { [weak center] id in
+                NSLog("[Halo] ui: complete reminder tapped: %@", id)
+                center?.onCompleteReminder?(id)
+            }
+        )
         }
     }
 
@@ -988,6 +1018,7 @@ struct HaloView: View {
         case .notification: return ("message.fill", .purple)
         case .focus(let f): return (FocusMonitor.isSFSymbol(f.symbol) ? f.symbol : "moon.fill", .indigo)
         case .weather(let w): return (w.symbol, .blue)
+        case .calendar: return ("calendar", .orange)
         }
     }
 
@@ -998,6 +1029,7 @@ struct HaloView: View {
         case .notification(let n): return n.appName
         case .focus(let f): return f.mode
         case .weather: return "Weather"
+        case .calendar: return "Calendar"
         }
     }
 
@@ -1009,6 +1041,7 @@ struct HaloView: View {
         case .notification(let n): Text(n.sender).font(.system(size: size, weight: .semibold))
         case .focus(let f): Text(f.mode).font(.system(size: size, weight: .semibold))
         case .weather(let w): Text(w.condition).font(.system(size: size, weight: .semibold))
+        case .calendar(let c): Text(c.nextItem?.title ?? "Calendar").font(.system(size: size, weight: .semibold))
         }
     }
 
@@ -1468,6 +1501,77 @@ struct WeatherExpandedView: View {
                 )
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+struct CalendarExpandedView: View {
+    let activity: CalendarActivity
+    var onCompleteReminder: (String) -> Void = { _ in }
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 60)) { context in
+            VStack(alignment: .leading, spacing: 7) {
+                if activity.items.isEmpty {
+                    Text("No upcoming events or reminders")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.65))
+                } else {
+                    ForEach(activity.items.prefix(4)) { item in
+                        calendarRow(item, now: context.date)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func calendarRow(_ item: CalendarItem, now: Date) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(item.isReminder ? Color.orange.opacity(0.18) : Color.blue.opacity(0.18))
+                    .frame(width: 30, height: 30)
+                Image(systemName: item.isReminder ? "checklist" : "calendar")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(item.isReminder ? .orange : .blue)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(CalendarMonitor.displayTime(for: item, now: now))
+                    if !item.calendarName.isEmpty {
+                        Text("·")
+                        Text(item.calendarName)
+                            .lineLimit(1)
+                    }
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.white.opacity(0.55))
+            }
+
+            Spacer(minLength: 0)
+
+            if item.isReminder {
+                Button {
+                    onCompleteReminder(item.id)
+                } label: {
+                    Image(systemName: "circle")
+                        .font(.system(size: 20, weight: .regular))
+                        .foregroundColor(.white.opacity(0.75))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain)
+                .help("Complete reminder")
+                .accessibilityLabel("Complete reminder \(item.title)")
+            }
+        }
+        .frame(height: 30)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 
