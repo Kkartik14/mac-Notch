@@ -68,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
             if let error { NSLog("[Halo] music: play-queued error: %@", error) }
             _ = result
-            musicMonitor.refresh()
+            musicMonitor.refreshAfterUserAction()
             return
         }
         // Catalog row: open the track page; playback stays where it is.

@@ -15,7 +15,10 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Run tests
+      - name: Run playback indicator regression tests
+        run: swift test --filter SpectrumBarsTests
+
+      - name: Run full test suite
         run: swift test
 
       - name: Build release binary

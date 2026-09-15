@@ -79,9 +79,9 @@ The window is interactive only over the visible shape. Transparent regions pass 
 
 ### Music
 
-[MusicAppMonitor](../Sources/Halo/MusicAppMonitor.swift) polls Music every three seconds. AppleScript returns a delimiter-separated snapshot containing title, artist, album, player state, position, and duration. Track changes fetch artwork and trigger a visible update; same-track polls update progress silently.
+[MusicAppMonitor](../Sources/Halo/MusicAppMonitor.swift) reads Music through AppleScript because direct MediaRemote reads are unreliable for Apple Music on recent macOS versions. It uses an adaptive one-shot poll: one second while playing, three seconds while paused, and a fifteen-second backstop while Music is not running. After play/pause/next/previous/seek actions, Music launch/activation/termination, and system wake, it schedules short follow-up probes. AppleScript returns a delimiter-separated snapshot containing title, artist, album, player state, position, and duration. A song change fetches artwork and triggers a visible update; playback-state changes and same-song polls update progress silently. The current-track script is compiled once and reused.
 
-The queue reader performs bounded neighbor reads rather than enumerating an entire library. It verifies that the reported index resolves to the current track before trusting a playlist context.
+The queue reader performs bounded neighbor reads rather than enumerating an entire library. It verifies that the reported index resolves to the current track before trusting a playlist context. Playlist rows are emitted immediately, then their embedded artwork is read lazily by playlist ID and track index and applied to the existing queue without rebuilding the Now Playing card.
 
 ### Spotify
 

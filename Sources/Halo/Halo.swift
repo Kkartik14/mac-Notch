@@ -74,8 +74,9 @@ struct NowPlayingActivity: Equatable {
 struct UpNextItem: Equatable {
     var title: String
     var artist: String
-    /// Remote thumbnail URL (Store path). Downloaded after delivery.
+    /// Remote thumbnail URL for catalog/session rows. Downloaded after delivery.
     var artworkURL: String? = nil
+    /// Embedded artwork bytes for playlist rows or downloaded catalog artwork.
     var artData: Data? = nil
     /// Library-context replay address (scripting tier): playlist + index.
     var playlistID: String? = nil
@@ -324,7 +325,7 @@ final class HaloCenter: ObservableObject {
         }
     }
 
-    /// Silent progress correction from the monitor (3s poll). Updates the
+    /// Silent progress correction from the monitor's adaptive poll. Updates the
     /// halo's copy in place — never expands, never hijacks.
     func updateNowPlayingProgress(elapsed: TimeInterval, duration: TimeInterval, isPlaying: Bool) {
         guard let idx = activities.firstIndex(where: { $0.id == "nowPlaying" }),
@@ -349,7 +350,7 @@ final class HaloCenter: ObservableObject {
         for idx in activities.indices {
             if case var .nowPlaying(n) = activities[idx], n.isPlaying, n.duration > 0 {
                 // Local 1Hz interpolation so seconds + bar move smoothly
-                // between the monitor's 3s corrections.
+                // between the monitor's adaptive corrections.
                 let next = min(n.duration, n.elapsed + 1)
                 if next != n.elapsed {
                     n.elapsed = next
@@ -922,12 +923,6 @@ struct HaloView: View {
                 .font(.headline)
                 .foregroundColor(.white)
             Spacer()
-            Button(action: { center.dismiss(activity.id) }) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(.white.opacity(0.45))
-                    .font(.system(size: 18))
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -1107,7 +1102,7 @@ struct NowPlayingExpandedView: View {
     }
 
     /// Up Next rail tile: real thumbnail when downloaded, dark note tile
-    /// while loading (or when the scripting path has no URL).
+    /// while the playlist artwork read is pending or unavailable.
     private func upNextTile(for item: UpNextItem) -> some View {
         Group {
             if let data = item.artData, let img = NSImage(data: data) {
@@ -1260,8 +1255,31 @@ struct NowPlayingExpandedView: View {
 }
 
 /// Live EQ mark: 4 bars bouncing while playing, flat when paused.
+enum SpectrumBarsMode: Equatable {
+    case animated
+    case still
+}
+
 struct SpectrumBars: View {
     let playing: Bool
+
+    /// Playback-state contract used by the view and its regression tests.
+    static func mode(for playing: Bool) -> SpectrumBarsMode {
+        playing ? .animated : .still
+    }
+
+    var body: some View {
+        if Self.mode(for: playing) == .animated {
+            AnimatedSpectrumBars()
+        } else {
+            StaticSpectrumBars()
+        }
+    }
+}
+
+/// Kept as a separate view so removing it when playback pauses also tears
+/// down the repeat-forever animation state.
+private struct AnimatedSpectrumBars: View {
     @State private var phase = false
 
     private let baseHeights: [CGFloat] = [12, 7, 10, 6]
@@ -1271,14 +1289,24 @@ struct SpectrumBars: View {
         HStack(spacing: 2.5) {
             ForEach(0..<4, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.white.opacity(playing ? 0.9 : 0.35))
-                    .frame(width: 3, height: playing ? (phase ? peakHeights[i] : baseHeights[i]) : 5)
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: 3, height: phase ? peakHeights[i] : baseHeights[i])
             }
         }
-        .animation(playing ? .easeInOut(duration: 0.45).repeatForever(autoreverses: true) : .default, value: phase)
-        .onAppear { phase = playing }
-        .onChange(of: playing) { _, isPlaying in
-            if isPlaying { phase.toggle() } else { phase = false }
+        .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: phase)
+        .onAppear { phase = true }
+    }
+}
+
+/// Paused state has no animated state or animation modifier at all.
+private struct StaticSpectrumBars: View {
+    var body: some View {
+        HStack(spacing: 2.5) {
+            ForEach(0..<4, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.white.opacity(0.35))
+                    .frame(width: 3, height: 5)
+            }
         }
     }
 }

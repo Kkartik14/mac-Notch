@@ -51,6 +51,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 - Priority ordering and temporary Charging promotion.
 - Battery ETA formatting and a live IOKit reading.
 - Weather condition-to-symbol mapping.
+- Playback-indicator state: paused playback selects a still indicator, while playing playback selects the animated indicator; progress updates also propagate the paused state.
 - Notification property-list decoding and malformed payload rejection.
 - Music scripting queue payload parsing.
 - Playback progress and recent-track attachment behavior.
