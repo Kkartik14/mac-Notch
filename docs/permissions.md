@@ -13,6 +13,7 @@ Halo is an accessory app with an unsandboxed entitlement configuration. That avo
 | New notification rows | Full Disk Access | NotificationMonitor | Real notification monitor stays silent; the context-menu demo remains available. |
 | Calendar events | Calendar full access | CalendarMonitor | Calendar events are unavailable; Reminders can still work if separately allowed. |
 | Reminders and completion | Reminders full access | CalendarMonitor | Reminders are unavailable and the completion control is not shown. |
+| Codex chats and turns | Codex CLI installation and its own authentication/configuration | CodexMonitor | The Codex activity reports unavailable; Halo does not read or store Codex credentials. |
 
 ## Automation
 
@@ -75,6 +76,8 @@ The current source makes requests to:
 - Artwork URLs supplied by Spotify or Apple Music CDN data.
 
 There is no Halo backend, analytics service, account system, or persistent activity database. Typed display preferences and the automatic permission-request ledger are stored in macOS `UserDefaults`; track titles and playback state are otherwise processed locally. Music store IDs are sent to the iTunes Lookup endpoint only when the session queue needs display metadata.
+
+Codex traffic is owned by the local Codex CLI launched as `codex app-server`. Halo sends protocol requests to that local process; the CLI applies the user's existing Codex authentication, model, sandbox, approval, and network configuration. Halo does not inspect API keys or proxy Codex requests through a Halo service.
 
 ## Changes to permission behavior
 

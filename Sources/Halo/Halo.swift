@@ -40,6 +40,7 @@ enum HaloActivity: Equatable, Identifiable {
     case focus(FocusActivity)
     case weather(WeatherActivity)
     case calendar(CalendarActivity)
+    case codex(CodexActivity)
 
     var id: String {
         switch self {
@@ -49,6 +50,7 @@ enum HaloActivity: Equatable, Identifiable {
         case .focus: return "focus"
         case .weather: return "weather"
         case .calendar: return "calendar"
+        case .codex: return "codex"
         }
     }
 }
@@ -135,6 +137,7 @@ final class HaloCenter: ObservableObject {
         case .nowPlaying: return 3
         case .focus: return 2
         case .calendar: return 2
+        case .codex: return 3
         case .charging: return 1
         case .weather: return 0
         }
@@ -158,6 +161,14 @@ final class HaloCenter: ObservableObject {
     var onOpenCalendarLocation: ((String) -> Void)?
     /// Open an event's external meeting or reference URL.
     var onOpenCalendarURL: ((URL) -> Void)?
+    /// Codex developer activity callbacks. The expanded card stays inside
+    /// Halo's fixed geometry; the monitor owns the app-server transport.
+    var onSelectCodexChat: ((String) -> Void)?
+    var onNewCodexChat: (() -> Void)?
+    var onRefreshCodex: (() -> Void)?
+    var onSendCodex: ((String) -> Void)?
+    var onInterruptCodex: (() -> Void)?
+    var onResolveCodexApproval: ((CodexApprovalDecision) -> Void)?
 
     private var autoDismissWorkItems: [String: DispatchWorkItem] = [:]
     private var collapseWorkItems: [String: DispatchWorkItem] = [:]
@@ -374,8 +385,16 @@ final class HaloCenter: ObservableObject {
 
 // MARK: - Window controller
 
+/// The halo stays non-activating so it does not steal focus just because the
+/// user moves over it. Once the user explicitly clicks the Codex composer,
+/// however, the panel must be able to become key and deliver keyboard input.
+private final class HaloPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 final class HaloWindowController: NSObject {
-    private var window: NSPanel?
+    private var window: HaloPanel?
     let center = HaloCenter()
     var actions = HaloActions()
     private var hoverWork: DispatchWorkItem?
@@ -423,7 +442,7 @@ final class HaloWindowController: NSObject {
     }
 
     func install(contextMenu: NSMenu? = nil) {
-        let panel = NSPanel(
+        let panel = HaloPanel(
             contentRect: NSRect(x: 0, y: 0, width: haloWindowSize.width, height: haloWindowSize.height),
             styleMask: [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow],
             backing: .buffered,
@@ -435,6 +454,8 @@ final class HaloWindowController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.acceptsMouseMovedEvents = true
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
@@ -628,6 +649,7 @@ struct HaloActions {
     var showWeather: () -> Void = {}
     var showFocus: () -> Void = {}
     var showCalendar: () -> Void = {}
+    var showCodex: () -> Void = {}
     var previewPillMusic: () -> Void = {}
     var previewPillWeather: () -> Void = {}
     var previewPillCharging: () -> Void = {}
@@ -722,6 +744,7 @@ struct HaloView: View {
             Button("Weather Card") { actions.showWeather() }
             Button("Focus Card") { actions.showFocus() }
             Button("Calendar") { actions.showCalendar() }
+            Button("Codex · Developer activity") { actions.showCodex() }
             Divider()
             Button("Pill · Music") { actions.previewPillMusic() }
             Button("Pill · Weather") { actions.previewPillWeather() }
@@ -849,6 +872,8 @@ struct HaloView: View {
             focusGlyph(for: f, size: 20)
         case .calendar:
             inlineDot(for: activity)
+        case .codex:
+            inlineDot(for: activity)
         default:
             inlineDot(for: activity)
         }
@@ -889,6 +914,12 @@ struct HaloView: View {
             } else {
                 inlineDot(for: activity)
             }
+        case .codex(let c):
+            Text(c.compactLabel)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .frame(width: 30, alignment: .trailing)
         default:
             inlineDot(for: activity)
         }
@@ -1015,6 +1046,16 @@ struct HaloView: View {
                 center?.onOpenCalendarURL?(url)
             }
         )
+        case .codex(let c): CodexExpandedView(
+            activity: c,
+            showWorkActivity: settings.showCodexWorkActivity,
+            onSelectChat: { [weak center] id in center?.onSelectCodexChat?(id) },
+            onNewChat: { [weak center] in center?.onNewCodexChat?() },
+            onRefresh: { [weak center] in center?.onRefreshCodex?() },
+            onSend: { [weak center] text in center?.onSendCodex?(text) },
+            onInterrupt: { [weak center] in center?.onInterruptCodex?() },
+            onResolveApproval: { [weak center] decision in center?.onResolveCodexApproval?(decision) }
+        )
         }
     }
 
@@ -1055,6 +1096,7 @@ struct HaloView: View {
         case .focus(let f): return (FocusMonitor.isSFSymbol(f.symbol) ? f.symbol : "moon.fill", .indigo)
         case .weather(let w): return (w.symbol, .blue)
         case .calendar: return ("calendar", .orange)
+        case .codex: return ("terminal.fill", .gray)
         }
     }
 
@@ -1066,6 +1108,7 @@ struct HaloView: View {
         case .focus(let f): return f.mode
         case .weather: return "Weather"
         case .calendar: return "Calendar"
+        case .codex: return "Codex"
         }
     }
 
@@ -1078,6 +1121,7 @@ struct HaloView: View {
         case .focus(let f): Text(f.mode).font(.system(size: size, weight: .semibold))
         case .weather(let w): Text(w.condition).font(.system(size: size, weight: .semibold))
         case .calendar(let c): Text(c.nextItem?.title ?? "Calendar").font(.system(size: size, weight: .semibold))
+        case .codex(let c): Text(c.selectedChat?.title ?? "Codex").font(.system(size: size, weight: .semibold))
         }
     }
 
