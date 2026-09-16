@@ -227,6 +227,109 @@ final class CalendarMonitorTests: XCTestCase {
 
     func testReminderActivityIDConvertsBackToEventKitID() {
         XCTAssertEqual(CalendarMonitor.eventKitIdentifier(for: "reminder:abc"), "abc")
+        XCTAssertEqual(CalendarMonitor.eventKitIdentifier(for: "event:abc"), "abc")
         XCTAssertEqual(CalendarMonitor.eventKitIdentifier(for: "abc"), "abc")
+    }
+
+    func testNativeURLsOpenTheExactCalendarOrReminderItem() {
+        let eventURL = CalendarMonitor.nativeURL(for: event(
+            id: "calendar-event",
+            title: "Design review",
+            offset: 60
+        ))
+        let eventComponents = eventURL.flatMap {
+            URLComponents(url: $0, resolvingAgainstBaseURL: false)
+        }
+
+        XCTAssertEqual(eventComponents?.scheme, "ical")
+        XCTAssertEqual(eventComponents?.host, "ekevent")
+        XCTAssertEqual(eventComponents?.path, "/calendar-event")
+        XCTAssertEqual(eventComponents?.queryItems?.first?.name, "method")
+        XCTAssertEqual(eventComponents?.queryItems?.first?.value, "show")
+        XCTAssertEqual(eventComponents?.queryItems?.last?.name, "options")
+        XCTAssertEqual(eventComponents?.queryItems?.last?.value, "more")
+
+        let reminderURL = CalendarMonitor.nativeURL(for: reminder(
+            id: "todo-item",
+            title: "Send notes",
+            offset: 60
+        ))
+        let reminderComponents = reminderURL.flatMap {
+            URLComponents(url: $0, resolvingAgainstBaseURL: false)
+        }
+
+        XCTAssertEqual(reminderComponents?.scheme, "x-apple-reminderkit")
+        XCTAssertEqual(reminderComponents?.host, "REMCDReminder")
+        XCTAssertEqual(reminderComponents?.path, "/todo-item")
+        XCTAssertNil(reminderComponents?.query)
+    }
+
+    func testMapsURLTrimsLocationAndPreservesSearchText() {
+        let url = CalendarMonitor.mapsURL(for: "  1 Infinite Loop, Cupertino  ")
+        let components = url.flatMap {
+            URLComponents(url: $0, resolvingAgainstBaseURL: false)
+        }
+
+        XCTAssertEqual(components?.scheme, "maps")
+        XCTAssertEqual(
+            components?.queryItems?.first(where: { $0.name == "q" })?.value,
+            "1 Infinite Loop, Cupertino"
+        )
+        XCTAssertNil(CalendarMonitor.mapsURL(for: " \n "))
+    }
+
+    func testEventTimeRangeShowsDurationWhileRemindersStayAtOneTime() {
+        let eventItem = event(
+            id: "duration",
+            title: "Long meeting",
+            offset: 60,
+            duration: 90 * 60
+        )
+        let reminderItem = reminder(
+            id: "reminder-time",
+            title: "Follow up",
+            offset: 60
+        )
+
+        XCTAssertTrue(CalendarMonitor.timeRange(for: eventItem).contains("–"))
+        XCTAssertNotEqual(
+            CalendarMonitor.timeRange(for: eventItem),
+            CalendarMonitor.timeOnly(for: eventItem)
+        )
+        XCTAssertEqual(
+            CalendarMonitor.timeRange(for: reminderItem),
+            CalendarMonitor.timeOnly(for: reminderItem)
+        )
+        XCTAssertEqual(CalendarMonitor.timeRange(for: CalendarItem(
+            id: "event:all-day",
+            title: "Holiday",
+            startDate: now,
+            endDate: now.addingTimeInterval(86_400),
+            isAllDay: true,
+            location: nil,
+            calendarName: "Work",
+            kind: .event,
+            isCompleted: false
+        )), "All day")
+    }
+
+    func testExternalURLOnlyExposesWebLinks() {
+        let webURL = URL(string: "https://example.com/meeting")!
+        let item = CalendarItem(
+            id: "event:linked",
+            title: "Online meeting",
+            startDate: now,
+            endDate: now.addingTimeInterval(3_600),
+            isAllDay: false,
+            location: nil,
+            calendarName: "Work",
+            kind: .event,
+            isCompleted: false,
+            externalURL: webURL
+        )
+
+        XCTAssertEqual(CalendarMonitor.externalURL(for: item), webURL)
+        XCTAssertEqual(CalendarMonitor.externalURL(for: webURL), webURL)
+        XCTAssertNil(CalendarMonitor.externalURL(for: URL(string: "x-apple-reminderkit://REMCDReminder/id")))
     }
 }

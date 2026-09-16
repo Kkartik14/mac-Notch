@@ -30,6 +30,8 @@ The bundle declares NSAppleEventsUsageDescription in [Info.plist](../Sources/Hal
 
 EventKit access is requested independently for Calendar and Reminders. Halo declares `NSCalendarsFullAccessUsageDescription` and `NSRemindersFullAccessUsageDescription` in [Info.plist](../Sources/Halo/Resources/Info.plist). The app reads today’s and upcoming events plus incomplete reminders with due dates, and writes a reminder only when the user taps its completion control. It does not create or edit calendar events and does not schedule native notifications.
 
+Opening an exact item uses Calendar/Reminders URL handlers. Location buttons use the macOS Maps URL handler, and meeting links use the URL's registered application; these actions do not require additional Halo permissions.
+
 To review access:
 
 1. Open System Settings.

@@ -21,6 +21,31 @@ struct CalendarItem: Equatable, Identifiable {
     let calendarName: String
     let kind: CalendarItemKind
     let isCompleted: Bool
+    let externalURL: URL?
+
+    init(
+        id: String,
+        title: String,
+        startDate: Date,
+        endDate: Date?,
+        isAllDay: Bool,
+        location: String?,
+        calendarName: String,
+        kind: CalendarItemKind,
+        isCompleted: Bool,
+        externalURL: URL? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.startDate = startDate
+        self.endDate = endDate
+        self.isAllDay = isAllDay
+        self.location = location
+        self.calendarName = calendarName
+        self.kind = kind
+        self.isCompleted = isCompleted
+        self.externalURL = externalURL
+    }
 
     var isReminder: Bool {
         kind == .reminder
@@ -187,9 +212,63 @@ final class CalendarMonitor: NSObject {
     /// Activity IDs are namespaced to keep event and reminder rows distinct;
     /// EventKit expects the original calendar-item identifier when saving.
     static func eventKitIdentifier(for activityID: String) -> String {
-        activityID.hasPrefix("reminder:")
-            ? String(activityID.dropFirst("reminder:".count))
-            : activityID
+        if activityID.hasPrefix("reminder:") {
+            return String(activityID.dropFirst("reminder:".count))
+        }
+        if activityID.hasPrefix("event:") {
+            return String(activityID.dropFirst("event:".count))
+        }
+        return activityID
+    }
+
+    /// Native macOS URLs that open the selected item in its owning app.
+    /// Calendar and Reminders handle these URLs themselves; no AppleScript
+    /// automation permission is needed.
+    static func nativeURL(for item: CalendarItem) -> URL? {
+        let identifier = eventKitIdentifier(for: item.id)
+        guard !identifier.isEmpty else { return nil }
+
+        var allowedCharacters = CharacterSet.urlPathAllowed
+        allowedCharacters.remove(charactersIn: "/")
+        let escapedIdentifier = identifier.addingPercentEncoding(
+            withAllowedCharacters: allowedCharacters
+        ) ?? identifier
+
+        var components = URLComponents()
+        components.scheme = item.isReminder ? "x-apple-reminderkit" : "ical"
+        components.host = item.isReminder ? "REMCDReminder" : "ekevent"
+        components.percentEncodedPath = "/\(escapedIdentifier)"
+        if !item.isReminder {
+            components.queryItems = [
+                URLQueryItem(name: "method", value: "show"),
+                URLQueryItem(name: "options", value: "more")
+            ]
+        }
+        return components.url
+    }
+
+    /// Creates a URL that opens a location search in Apple Maps.
+    static func mapsURL(for location: String) -> URL? {
+        let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var components = URLComponents(string: "maps://")
+        components?.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+        return components?.url
+    }
+
+    /// EventKit URLs can point at an online meeting or another useful web
+    /// resource. Native item URLs are handled separately by nativeURL(for:).
+    static func externalURL(for item: CalendarItem) -> URL? {
+        externalURL(for: item.externalURL)
+    }
+
+    static func externalURL(for url: URL?) -> URL? {
+        guard let url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+        return url
     }
 
     /// Pure selection logic shared by the live monitor and unit tests.
@@ -268,11 +347,48 @@ final class CalendarMonitor: NSObject {
         return "\(day.formatted(weekdayStyle).uppercased()) · \(dateText)"
     }
 
+    private static func formattedTime(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
+    }
+
     /// Row metadata intentionally omits the date; dateGroupLabel supplies it
     /// once per non-today section in the expanded Up Next rail.
     static func timeOnly(for item: CalendarItem) -> String {
         guard !item.isAllDay else { return "All day" }
-        return item.startDate.formatted(date: .omitted, time: .shortened)
+        return formattedTime(item.startDate)
+    }
+
+    /// A compact start/end range used in rows and the expanded detail panel.
+    /// Showing both endpoints makes the event duration visible at a glance.
+    static func timeRange(for item: CalendarItem) -> String {
+        guard !item.isAllDay else { return "All day" }
+
+        let start = timeOnly(for: item)
+        guard item.kind == .event,
+              let endDate = item.endDate,
+              endDate > item.startDate
+        else { return start }
+
+        return "\(start)–\(formattedTime(endDate))"
+    }
+
+    /// Full date plus start/end range for the primary detail column.
+    static func exactTimeRange(for item: CalendarItem, now: Date = Date()) -> String {
+        guard !item.isAllDay else { return "All day" }
+        let range = timeRange(for: item)
+        let calendar = Calendar.current
+        if calendar.isDate(item.startDate, inSameDayAs: now) {
+            return range
+        }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(item.startDate, inSameDayAs: tomorrow) {
+            return "Tomorrow \(range)"
+        }
+
+        let date = item.startDate.formatted(
+            .dateTime.weekday(.abbreviated).month(.abbreviated).day()
+        )
+        return "\(date) \(range)"
     }
 
     private static func itemComesBefore(_ lhs: CalendarItem, _ rhs: CalendarItem) -> Bool {
@@ -576,7 +692,8 @@ final class CalendarMonitor: NSObject {
             location: event.location?.trimmingCharacters(in: .whitespacesAndNewlines),
             calendarName: event.calendar?.title ?? "",
             kind: .event,
-            isCompleted: false
+            isCompleted: false,
+            externalURL: event.url
         )
     }
 
@@ -591,10 +708,11 @@ final class CalendarMonitor: NSObject {
             startDate: dueDate,
             endDate: nil,
             isAllDay: reminder.dueDateComponents?.hour == nil,
-            location: nil,
+            location: reminder.location?.trimmingCharacters(in: .whitespacesAndNewlines),
             calendarName: reminder.calendar?.title ?? "",
             kind: .reminder,
-            isCompleted: reminder.isCompleted
+            isCompleted: reminder.isCompleted,
+            externalURL: reminder.url
         )
     }
 }

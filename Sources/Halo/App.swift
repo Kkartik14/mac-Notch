@@ -180,6 +180,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         haloController.center.onOpenCalendarItem = { [weak self] item in
             self?.openCalendarItem(item)
         }
+        haloController.center.onOpenCalendarLocation = { [weak self] location in
+            self?.openCalendarLocation(location)
+        }
+        haloController.center.onOpenCalendarURL = { [weak self] url in
+            self?.openCalendarURL(url)
+        }
 
         // Now Playing — track changes pop the card open and it STAYS open
         // until dismissed. No auto-collapse: collapsing on its own is what
@@ -333,9 +339,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Open the native app for a Calendar or Reminder row. EventKit remains
-    /// read-only here; completion is the only write action Halo performs.
+    /// Open the exact Calendar or Reminder item. EventKit remains read-only
+    /// here; completion is the only write action Halo performs.
     private func openCalendarItem(_ item: CalendarItem) {
+        if let itemURL = CalendarMonitor.nativeURL(for: item),
+           NSWorkspace.shared.open(itemURL) {
+            NSLog("[Halo] calendar: opening exact %@: %@", item.title, itemURL.absoluteString)
+            return
+        }
+
         let bundleIdentifier = item.isReminder ? "com.apple.reminders" : "com.apple.iCal"
         guard let appURL = NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: bundleIdentifier
@@ -346,6 +358,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSLog("[Halo] calendar: opening %@ for %@", item.isReminder ? "Reminders" : "Calendar", item.title)
         NSWorkspace.shared.open(appURL)
+    }
+
+    private func openCalendarLocation(_ location: String) {
+        guard let url = CalendarMonitor.mapsURL(for: location),
+              NSWorkspace.shared.open(url) else {
+            NSLog("[Halo] calendar: Maps could not open location: %@", location)
+            return
+        }
+
+        NSLog("[Halo] calendar: opening location: %@", location)
+    }
+
+    private func openCalendarURL(_ url: URL) {
+        guard CalendarMonitor.externalURL(for: url) != nil else { return }
+
+        guard NSWorkspace.shared.open(url) else {
+            NSLog("[Halo] calendar: event URL could not open: %@", url.absoluteString)
+            return
+        }
+
+        NSLog("[Halo] calendar: opening event URL: %@", url.absoluteString)
     }
 
     private func makeContextMenu() -> NSMenu {

@@ -152,8 +152,12 @@ final class HaloCenter: ObservableObject {
     var onReplayRecent: ((PlaybackHistoryMonitor.Track) -> Void)?
     /// Complete a reminder from the expanded Calendar activity.
     var onCompleteReminder: ((String) -> Void)?
-    /// Open the native Calendar or Reminders app for an expanded row.
+    /// Open the exact Calendar or Reminders item for an expanded row.
     var onOpenCalendarItem: ((CalendarItem) -> Void)?
+    /// Open an EventKit location in Apple Maps.
+    var onOpenCalendarLocation: ((String) -> Void)?
+    /// Open an event's external meeting or reference URL.
+    var onOpenCalendarURL: ((URL) -> Void)?
 
     private var autoDismissWorkItems: [String: DispatchWorkItem] = [:]
     private var collapseWorkItems: [String: DispatchWorkItem] = [:]
@@ -982,6 +986,12 @@ struct HaloView: View {
             onCompleteReminder: { [weak center] id in
                 NSLog("[Halo] ui: complete reminder tapped: %@", id)
                 center?.onCompleteReminder?(id)
+            },
+            onOpenLocation: { [weak center] location in
+                center?.onOpenCalendarLocation?(location)
+            },
+            onOpenURL: { [weak center] url in
+                center?.onOpenCalendarURL?(url)
             }
         )
         }
@@ -1513,6 +1523,8 @@ struct CalendarExpandedView: View {
     let activity: CalendarActivity
     var onOpenItem: (CalendarItem) -> Void = { _ in }
     var onCompleteReminder: (String) -> Void = { _ in }
+    var onOpenLocation: (String) -> Void = { _ in }
+    var onOpenURL: (URL) -> Void = { _ in }
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 60)) { context in
@@ -1596,33 +1608,78 @@ struct CalendarExpandedView: View {
                 .minimumScaleFactor(0.75)
                 .padding(.top, 1)
 
-            Text(item.title)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.top, 6)
-
-            HStack(spacing: 5) {
-                Text(CalendarMonitor.exactTime(for: item, now: now))
-                if !item.calendarName.isEmpty {
-                    Text("·")
-                    Text(item.calendarName)
+            Button {
+                onOpenItem(item)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
                         .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    HStack(spacing: 5) {
+                        Text(CalendarMonitor.exactTimeRange(for: item, now: now))
+                            .lineLimit(1)
+                        if !item.calendarName.isEmpty {
+                            Text("·")
+                            Text(item.calendarName)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.58))
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(.white.opacity(0.58))
-            .padding(.top, 3)
+            .buttonStyle(.plain)
+            .help(item.isReminder ? "Open exact reminder in Reminders" : "Open exact event in Calendar")
+            .padding(.top, 6)
 
             if let location = item.location?.trimmingCharacters(in: .whitespacesAndNewlines),
                !location.isEmpty {
-                Label(location, systemImage: "mappin.and.ellipse")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.42))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.top, 2)
+                HStack(spacing: 6) {
+                    Button {
+                        onOpenLocation(location)
+                    } label: {
+                        Label(location, systemImage: "mappin.and.ellipse")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white.opacity(0.5))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open location in Maps")
+                    .accessibilityLabel("Open \(location) in Maps")
+
+                    if let url = CalendarMonitor.externalURL(for: item) {
+                        Button {
+                            onOpenURL(url)
+                        } label: {
+                            Image(systemName: "link")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.5))
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open event link")
+                        .accessibilityLabel("Open event link")
+                    }
+                }
+                .padding(.top, 2)
+            } else if let url = CalendarMonitor.externalURL(for: item) {
+                Button {
+                    onOpenURL(url)
+                } label: {
+                    Label("Open link", systemImage: "link")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Open event link")
+                .padding(.top, 2)
             }
         }
     }
@@ -1655,7 +1712,7 @@ struct CalendarExpandedView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
                         HStack(spacing: 5) {
-                            Text(CalendarMonitor.timeOnly(for: item))
+                            Text(CalendarMonitor.timeRange(for: item))
                             if !item.calendarName.isEmpty {
                                 Text("·")
                                 Text(item.calendarName)
@@ -1670,7 +1727,24 @@ struct CalendarExpandedView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(item.isReminder ? "Open in Reminders" : "Open in Calendar")
+            .help(item.isReminder ? "Open exact reminder in Reminders" : "Open exact event in Calendar")
+
+            if let location = item.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !location.isEmpty {
+                Button {
+                    onOpenLocation(location)
+                } label: {
+                    Label(location, systemImage: "mappin.and.ellipse")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.white.opacity(0.5))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 105, alignment: .trailing)
+                }
+                .buttonStyle(.plain)
+                .help("Open location in Maps")
+                .accessibilityLabel("Open \(location) in Maps")
+            }
 
             if item.isReminder {
                 if item.startDate < now {
