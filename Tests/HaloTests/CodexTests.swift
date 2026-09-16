@@ -100,6 +100,52 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(chat?.canSendDirectInput, false)
     }
 
+    func testActiveWriterErrorsAreRecognizedForQueueHandoff() {
+        XCTAssertTrue(CodexMonitor.isActiveWriterError(
+            "thread 01a0 already has an active writer"
+        ))
+        XCTAssertFalse(CodexMonitor.isActiveWriterError("thread not found"))
+    }
+
+    func testQueueParamsCarryTheMessageAndClientIdentity() {
+        let params = CodexMonitor.queueParams(
+            threadID: "thread-1",
+            text: "Continue this chat",
+            clientUserMessageID: "message-1"
+        )
+
+        XCTAssertEqual(params["threadId"] as? String, "thread-1")
+        XCTAssertEqual(params["clientUserMessageId"] as? String, "message-1")
+        let input = params["input"] as? [[String: Any]]
+        XCTAssertEqual(input?.first?["type"] as? String, "text")
+        XCTAssertEqual(input?.first?["text"] as? String, "Continue this chat")
+    }
+
+    func testNewAssistantReplyIsDetectedAfterAQueuedUserMessage() {
+        let messages = [
+            CodexMessage(id: "old-user", role: .user, text: "Earlier"),
+            CodexMessage(id: "old-assistant", role: .assistant, text: "Already done"),
+            CodexMessage(id: "queued-user", role: .user, text: "Continue this chat"),
+            CodexMessage(id: "new-assistant", role: .assistant, text: "Continuing now")
+        ]
+
+        XCTAssertTrue(CodexMonitor.hasNewAssistantReply(
+            in: messages,
+            afterUserText: ["Continue this chat"],
+            excluding: ["old-user", "old-assistant"]
+        ))
+        XCTAssertFalse(CodexMonitor.hasNewAssistantReply(
+            in: Array(messages.prefix(3)),
+            afterUserText: ["Continue this chat"],
+            excluding: ["old-user", "old-assistant"]
+        ))
+    }
+
+    func testQueuedStateUsesThreeCharacterCompactLabel() {
+        XCTAssertEqual(CodexThreadState.queued.title, "Queued")
+        XCTAssertEqual(CodexThreadState.queued.compactLabel, "QUE")
+    }
+
     func testVisibleConversationItemsExcludePrivateReasoning() {
         let entries: [[String: Any]] = [
             ["item": [
@@ -162,6 +208,24 @@ final class CodexProtocolTests: XCTestCase {
 
         XCTAssertEqual(activity.visibleMessages(showWorkActivity: false).map(\.id), ["user-1", "assistant-1"])
         XCTAssertEqual(activity.visibleMessages(showWorkActivity: true).map(\.id), ["user-1", "work-1", "assistant-1"])
+    }
+
+    func testConversationScrollTokenChangesWhenLatestMessageUpdates() {
+        let initial = CodexActivity(
+            chats: [],
+            selectedChatID: nil,
+            messages: [CodexMessage(id: "assistant-1", role: .assistant, text: "Working")],
+            connection: .connected,
+            pendingApproval: nil,
+            errorMessage: nil
+        )
+        var updated = initial
+        updated.messages[0].text = "Working now"
+
+        XCTAssertNotEqual(
+            initial.conversationScrollToken(showWorkActivity: false),
+            updated.conversationScrollToken(showWorkActivity: false)
+        )
     }
 
     func testActivityUsesApprovalLabelInCompactPill() {

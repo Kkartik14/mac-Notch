@@ -122,7 +122,9 @@ struct CodexExpandedView: View {
                 HaloScrollView(
                     items: visibleMessages,
                     maximumHeight: 82,
-                    rowSpacing: 6
+                    rowSpacing: 6,
+                    scrollToBottomOnChange: true,
+                    scrollTrigger: activity.conversationScrollToken(showWorkActivity: showWorkActivity)
                 ) { message in
                     messageRow(message)
                 }
@@ -260,14 +262,16 @@ struct CodexExpandedView: View {
             // newline that makes the tiny composer appear unresponsive.
             TextField(activity.selectedChat?.canSendDirectInput == false
                       ? "This chat cannot accept input — click + for a new chat"
-                      : "Ask Codex…", text: $draft)
+                      : activity.selectedState == .queued
+                        ? "Message queued in the active Codex session…"
+                        : "Ask Codex…", text: $draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 10, weight: .regular))
                 .foregroundColor(.white.opacity(0.88))
                 .lineLimit(1)
                 .submitLabel(.send)
                 .onSubmit(submit)
-                .disabled(activity.selectedChat?.canSendDirectInput == false)
+                .disabled(activity.selectedChat?.canSendDirectInput == false || activity.selectedState == .queued)
 
             if activity.selectedState == .running {
                 Button(action: onInterrupt) {
@@ -327,7 +331,9 @@ struct CodexExpandedView: View {
 
     private func submit() {
         let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, activity.selectedChat?.canSendDirectInput == true else { return }
+        guard !value.isEmpty,
+              activity.selectedChat?.canSendDirectInput == true,
+              activity.selectedState != .queued else { return }
         draft = ""
         onSend(value)
     }
@@ -335,6 +341,7 @@ struct CodexExpandedView: View {
     private var canSubmit: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && activity.selectedChat?.canSendDirectInput == true
+            && activity.selectedState != .queued
     }
 
     private func roleLabel(_ role: CodexMessageRole) -> String {
@@ -356,6 +363,7 @@ struct CodexExpandedView: View {
     private func statusColor(_ state: CodexThreadState) -> Color {
         switch state {
         case .running: return .green
+        case .queued: return .blue
         case .waiting: return .orange
         case .failed: return .red
         case .completed: return .white.opacity(0.7)

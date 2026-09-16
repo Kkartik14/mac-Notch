@@ -37,6 +37,7 @@ enum CodexConnectionState: Equatable {
 enum CodexThreadState: Equatable {
     case idle
     case running
+    case queued
     case waiting
     case completed
     case failed
@@ -46,6 +47,7 @@ enum CodexThreadState: Equatable {
         switch self {
         case .idle: return "Ready"
         case .running: return "Working"
+        case .queued: return "Queued"
         case .waiting: return "Needs your decision"
         case .completed: return "Completed"
         case .failed: return "Failed"
@@ -59,6 +61,7 @@ enum CodexThreadState: Equatable {
         switch self {
         case .idle: return "RDY"
         case .running: return "RUN"
+        case .queued: return "QUE"
         case .waiting: return "ASK"
         case .completed: return "OK"
         case .failed: return "ERR"
@@ -203,6 +206,17 @@ struct CodexActivity: Equatable {
         guard !showWorkActivity else { return messages }
         return messages.filter { $0.role != .tool }
     }
+
+    /// A small content token lets the shared scroll container distinguish a
+    /// streaming delta from an unchanged message list and keep the newest
+    /// Codex output in view.
+    func conversationScrollToken(showWorkActivity: Bool) -> String {
+        visibleMessages(showWorkActivity: showWorkActivity)
+            .map { message in
+                [message.id, message.text, String(message.isStreaming)].joined(separator: "\u{1F}")
+            }
+            .joined(separator: "\u{1E}")
+    }
 }
 
 // MARK: - Codex app-server client
@@ -232,6 +246,14 @@ final class CodexMonitor: ObservableObject {
     private var nextRequestID = 1
     private var pendingRequests: [String: PendingRequest] = [:]
     private var pendingTurnText: [String: String] = [:]
+    private var queuedMessageTexts: [String: [String]] = [:]
+    private var queuedThreadIDs = Set<String>()
+    private var externalHandoffMessageTexts: [String: [String]] = [:]
+    private var externalHandoffBaselineMessageIDs: [String: Set<String>] = [:]
+    private var externalReplySeen = Set<String>()
+    private var queuedRefreshTimer: Timer?
+    private var queuedRefreshThreadIDs = Set<String>()
+    private var queuedRefreshDeadlines: [String: Date] = [:]
     private var loadedThreadIDs = Set<String>()
     private var currentTurnIDs: [String: String] = [:]
     private var messagesByThread: [String: [CodexMessage]] = [:]
@@ -369,6 +391,15 @@ final class CodexMonitor: ObservableObject {
         errorHandle = nil
         pendingRequests.removeAll()
         pendingTurnText.removeAll()
+        queuedMessageTexts.removeAll()
+        queuedThreadIDs.removeAll()
+        externalHandoffMessageTexts.removeAll()
+        externalHandoffBaselineMessageIDs.removeAll()
+        externalReplySeen.removeAll()
+        queuedRefreshTimer?.invalidate()
+        queuedRefreshTimer = nil
+        queuedRefreshThreadIDs.removeAll()
+        queuedRefreshDeadlines.removeAll()
         loadedThreadIDs.removeAll()
         currentTurnIDs.removeAll()
         serverRequestIDs.removeAll()
@@ -606,6 +637,34 @@ final class CodexMonitor: ObservableObject {
         return nil
     }
 
+    static func isActiveWriterError(_ message: String) -> Bool {
+        message.lowercased().contains("active writer")
+    }
+
+    static func queueParams(threadID: String, text: String, clientUserMessageID: String) -> [String: Any] {
+        [
+            "threadId": threadID,
+            "clientUserMessageId": clientUserMessageID,
+            "input": [["type": "text", "text": text]]
+        ]
+    }
+
+    static func hasNewAssistantReply(
+        in messages: [CodexMessage],
+        afterUserText userTexts: [String],
+        excluding baselineMessageIDs: Set<String>
+    ) -> Bool {
+        guard let userIndex = messages.lastIndex(where: {
+            $0.role == .user && userTexts.contains($0.text)
+        }) else { return false }
+
+        return messages.dropFirst(userIndex + 1).contains {
+            $0.role == .assistant
+                && !baselineMessageIDs.contains($0.id)
+                && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     // MARK: JSONL transport
 
     private func consumeOutput(_ data: Data) {
@@ -659,7 +718,12 @@ final class CodexMonitor: ObservableObject {
         case "thread/list":
             let objects = result["data"] as? [[String: Any]] ?? []
             let parsed = objects.compactMap(Self.parseChat)
-            chats = parsed.sorted { $0.updatedAt > $1.updatedAt }
+            chats = parsed.sorted { $0.updatedAt > $1.updatedAt }.map { chat in
+                guard queuedThreadIDs.contains(chat.id) else { return chat }
+                var queued = chat
+                queued.state = .queued
+                return queued
+            }
             if let selectedChatID,
                chats.contains(where: { $0.id == selectedChatID }) {
                 messages = messagesByThread[selectedChatID] ?? messages
@@ -672,6 +736,7 @@ final class CodexMonitor: ObservableObject {
                !pendingRequests.values.contains(where: { $0.method == "thread/start" }) {
                 createChat()
             }
+            finishExternalHandoffsIfIdle()
             publishActivity()
 
         case "thread/items/list":
@@ -679,7 +744,9 @@ final class CodexMonitor: ObservableObject {
             let entries = result["data"] as? [[String: Any]] ?? []
             // The request asks for descending order so the newest work is
             // cheap to fetch; reverse it back into conversation order.
-            let parsed = Self.parseMessages(from: entries.reversed())
+            var parsed = Self.parseMessages(from: entries.reversed())
+            reconcileQueuedMessages(for: threadID, messages: &parsed)
+            observeExternalReply(for: threadID, messages: parsed)
             messagesByThread[threadID] = parsed
             if selectedChatID == threadID { messages = parsed }
             publishActivity()
@@ -703,6 +770,35 @@ final class CodexMonitor: ObservableObject {
             if let text = pendingTurnText[threadID] {
                 sendTurn(threadID: threadID, text: text)
             }
+            publishActivity()
+
+        case "thread/queue/add":
+            guard let threadID = request.threadID,
+                  let submission = result["queuedSubmission"] as? [String: Any],
+                  let submissionID = Self.string(submission["id"]),
+                  !submissionID.isEmpty else {
+                if let threadID = request.threadID {
+                    pendingTurnText.removeValue(forKey: threadID)
+                    queuedThreadIDs.remove(threadID)
+                    updateThreadState(threadID, state: .failed)
+                }
+                errorMessage = "Codex accepted the handoff without returning a queue entry."
+                publishActivity()
+                return
+            }
+
+            let text = pendingTurnText.removeValue(forKey: threadID) ?? ""
+            if !text.isEmpty {
+                queuedMessageTexts[threadID, default: []].append(text)
+                externalHandoffMessageTexts[threadID, default: []].append(text)
+            }
+            queuedMessageTexts[threadID]?.removeAll { $0.isEmpty }
+            queuedThreadIDs.insert(threadID)
+            queuedRefreshThreadIDs.insert(threadID)
+            queuedRefreshDeadlines[threadID] = Date().addingTimeInterval(120)
+            startQueuedRefreshTimerIfNeeded()
+            errorMessage = "Message queued for the active Codex session."
+            updateThreadState(threadID, state: .queued)
             publishActivity()
 
         case "thread/start":
@@ -751,19 +847,21 @@ final class CodexMonitor: ObservableObject {
             return
         }
         if let threadID = request.threadID,
-           let pending = pendingTurnText[threadID],
-           request.method == "thread/resume",
-           Self.resumeErrorMeansAlreadyLoaded(message) {
-            // A running thread is already loaded in some app-server versions.
-            // Retrying turn/start keeps Halo compatible with both states.
-            loadedThreadIDs.insert(threadID)
-            sendTurn(threadID: threadID, text: pending)
+           (request.method == "thread/resume" || request.method == "turn/start"),
+           Self.isActiveWriterError(message) {
+            queuePendingMessage(threadID: threadID)
             return
         }
         if request.method == "thread/start" {
             pendingTurnText.removeValue(forKey: "__new__")
         } else if let threadID = request.threadID {
             pendingTurnText.removeValue(forKey: threadID)
+            if request.method == "thread/queue/add" {
+                queuedThreadIDs.remove(threadID)
+                queuedRefreshThreadIDs.remove(threadID)
+                queuedRefreshDeadlines.removeValue(forKey: threadID)
+                stopQueuedRefreshTimerIfNeeded()
+            }
         }
         errorMessage = message
         if let threadID = request.threadID { updateThreadState(threadID, state: .failed) }
@@ -824,6 +922,10 @@ final class CodexMonitor: ObservableObject {
                 if selectedChatID == nil { selectedChatID = parsed.id }
                 publishActivity()
             }
+
+        case "thread/queue/changed":
+            guard let threadID = Self.string(params["threadId"]) else { return }
+            loadMessages(for: threadID)
 
         case "error":
             errorMessage = Self.string(params["message"]) ?? "Codex reported an error."
@@ -889,6 +991,7 @@ final class CodexMonitor: ObservableObject {
     }
 
     private func requestThreadList() {
+        guard !pendingRequests.values.contains(where: { $0.method == "thread/list" }) else { return }
         _ = request(
             method: "thread/list",
             params: ["limit": 50, "sortKey": "updated_at", "sortDirection": "desc"],
@@ -897,7 +1000,10 @@ final class CodexMonitor: ObservableObject {
     }
 
     private func loadMessages(for threadID: String) {
-        guard process?.isRunning == true else { return }
+        guard process?.isRunning == true,
+              !pendingRequests.values.contains(where: {
+                  $0.method == "thread/items/list" && $0.threadID == threadID
+              }) else { return }
         _ = request(
             method: "thread/items/list",
             params: [
@@ -915,6 +1021,157 @@ final class CodexMonitor: ObservableObject {
             "input": [["type": "text", "text": text]]
         ]
         _ = request(method: "turn/start", params: params, threadID: threadID)
+    }
+
+    private func queuePendingMessage(threadID: String) {
+        guard let text = pendingTurnText[threadID], !text.isEmpty else {
+            errorMessage = "Codex reported an active session, but Halo has no pending message to queue."
+            publishActivity()
+            return
+        }
+        guard !pendingRequests.values.contains(where: {
+            $0.method == "thread/queue/add" && $0.threadID == threadID
+        }) else { return }
+
+        if externalHandoffBaselineMessageIDs[threadID] == nil {
+            externalHandoffBaselineMessageIDs[threadID] = Set(
+                (messagesByThread[threadID] ?? []).map(\.id)
+            )
+        }
+        queuedThreadIDs.insert(threadID)
+        updateThreadState(threadID, state: .queued)
+        _ = request(
+            method: "thread/queue/add",
+            params: Self.queueParams(
+                threadID: threadID,
+                text: text,
+                clientUserMessageID: UUID().uuidString
+            ),
+            threadID: threadID
+        )
+        errorMessage = "Sending to the active Codex session…"
+        publishActivity()
+    }
+
+    private func reconcileQueuedMessages(for threadID: String, messages: inout [CodexMessage]) {
+        guard let queued = queuedMessageTexts[threadID], !queued.isEmpty else { return }
+        var remaining: [String] = []
+        for (index, text) in queued.enumerated() {
+            if messages.contains(where: { $0.role == .user && $0.text == text }) {
+                continue
+            }
+            Self.merge(
+                CodexMessage(
+                    id: "halo-queued-\(threadID)-\(index)",
+                    role: .user,
+                    text: text
+                ),
+                into: &messages
+            )
+            remaining.append(text)
+        }
+
+        if remaining.isEmpty {
+            queuedMessageTexts.removeValue(forKey: threadID)
+            queuedThreadIDs.remove(threadID)
+            if selectedChatID == threadID {
+                if errorMessage == "Message queued for the active Codex session." {
+                    errorMessage = nil
+                }
+                updateThreadState(threadID, state: .running)
+            }
+        } else {
+            queuedMessageTexts[threadID] = remaining
+        }
+    }
+
+    private func observeExternalReply(for threadID: String, messages: [CodexMessage]) {
+        guard let userTexts = externalHandoffMessageTexts[threadID], !userTexts.isEmpty else { return }
+        let baseline = externalHandoffBaselineMessageIDs[threadID] ?? []
+        if Self.hasNewAssistantReply(
+            in: messages,
+            afterUserText: userTexts,
+            excluding: baseline
+        ) {
+            externalReplySeen.insert(threadID)
+        }
+    }
+
+    private func finishExternalHandoffsIfIdle() {
+        for threadID in Array(externalReplySeen) {
+            guard let chat = chats.first(where: { $0.id == threadID }),
+                  chat.state != .running,
+                  chat.state != .waiting,
+                  chat.state != .queued else { continue }
+            finishExternalHandoff(for: threadID)
+        }
+    }
+
+    private func finishExternalHandoff(for threadID: String) {
+        externalHandoffMessageTexts.removeValue(forKey: threadID)
+        externalHandoffBaselineMessageIDs.removeValue(forKey: threadID)
+        externalReplySeen.remove(threadID)
+        queuedMessageTexts.removeValue(forKey: threadID)
+        queuedThreadIDs.remove(threadID)
+        queuedRefreshThreadIDs.remove(threadID)
+        queuedRefreshDeadlines.removeValue(forKey: threadID)
+        if selectedChatID == threadID,
+           errorMessage == "Message queued for the active Codex session." {
+            errorMessage = nil
+        }
+        stopQueuedRefreshTimerIfNeeded()
+    }
+
+    private func startQueuedRefreshTimerIfNeeded() {
+        guard queuedRefreshTimer == nil else { return }
+        queuedRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.refreshQueuedThreads()
+        }
+    }
+
+    private func stopQueuedRefreshTimerIfNeeded() {
+        guard queuedRefreshThreadIDs.isEmpty else { return }
+        queuedRefreshTimer?.invalidate()
+        queuedRefreshTimer = nil
+    }
+
+    private func refreshQueuedThreads() {
+        guard process?.isRunning == true, connection == .connected else {
+            queuedRefreshTimer?.invalidate()
+            queuedRefreshTimer = nil
+            return
+        }
+
+        let now = Date()
+        var expired: [String] = []
+        for threadID in queuedRefreshThreadIDs {
+            if queuedRefreshDeadlines[threadID].map({ $0 <= now }) == true {
+                expired.append(threadID)
+            } else {
+                loadMessages(for: threadID)
+            }
+        }
+        requestThreadList()
+        for threadID in expired {
+            let wasStillQueued = queuedMessageTexts[threadID] != nil
+            let replyWasSeen = externalReplySeen.contains(threadID)
+            queuedRefreshThreadIDs.remove(threadID)
+            queuedRefreshDeadlines.removeValue(forKey: threadID)
+            queuedThreadIDs.remove(threadID)
+            externalHandoffMessageTexts.removeValue(forKey: threadID)
+            externalHandoffBaselineMessageIDs.removeValue(forKey: threadID)
+            externalReplySeen.remove(threadID)
+            if selectedChatID == threadID {
+                updateThreadState(threadID, state: .running)
+                errorMessage = replyWasSeen
+                    ? nil
+                    : wasStillQueued
+                        ? "Message is still queued in the active Codex session. Refresh to check it."
+                        : "Codex is still working in the active session. Refresh to check it."
+                publishActivity()
+            }
+        }
+        stopQueuedRefreshTimerIfNeeded()
     }
 
     @discardableResult
@@ -1081,10 +1338,4 @@ final class CodexMonitor: ObservableObject {
         }
     }
 
-    private static func resumeErrorMeansAlreadyLoaded(_ message: String) -> Bool {
-        let normalized = message.lowercased()
-        return normalized.contains("already has an active writer")
-            || normalized.contains("already loaded")
-            || normalized.contains("already resumed")
-    }
 }
