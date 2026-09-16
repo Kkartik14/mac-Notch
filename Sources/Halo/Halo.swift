@@ -1553,15 +1553,12 @@ struct CalendarExpandedView: View {
                     .foregroundColor(.white.opacity(0.38))
                     .frame(maxHeight: .infinity, alignment: .topLeading)
             } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(upNextItems) { item in
-                            calendarRow(item, now: now)
-                        }
-                    }
+                HaloScrollView(
+                    items: upNextItems,
+                    rowHeight: 30
+                ) { item in
+                    calendarRow(item, now: now)
                 }
-                .frame(maxHeight: 112)
-                .scrollIndicators(.automatic)
             }
         }
     }

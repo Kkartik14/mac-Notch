@@ -54,6 +54,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 - Playback-indicator state: paused playback selects a still indicator, while playing playback selects the animated indicator; progress updates also propagate the paused state.
 - Notification property-list decoding and malformed payload rejection.
 - Calendar/Reminders filtering, ordering, in-progress event retention, overdue-reminder persistence, relative time labels, start-boundary detection, and rail limits.
+- Shared scroll-rail geometry: row spacing, viewport clamping, empty input, invalid dimensions, and the overflow threshold.
 - Music scripting queue payload parsing.
 - Playback progress and recent-track attachment behavior.
 - Gzip decoding, protobuf title/artist parsing, archive parsing, JSON extraction, and artwork URL normalization.
