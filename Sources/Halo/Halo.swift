@@ -152,6 +152,8 @@ final class HaloCenter: ObservableObject {
     var onReplayRecent: ((PlaybackHistoryMonitor.Track) -> Void)?
     /// Complete a reminder from the expanded Calendar activity.
     var onCompleteReminder: ((String) -> Void)?
+    /// Open the native Calendar or Reminders app for an expanded row.
+    var onOpenCalendarItem: ((CalendarItem) -> Void)?
 
     private var autoDismissWorkItems: [String: DispatchWorkItem] = [:]
     private var collapseWorkItems: [String: DispatchWorkItem] = [:]
@@ -974,6 +976,9 @@ struct HaloView: View {
         case .weather(let w): WeatherExpandedView(activity: w)
         case .calendar(let c): CalendarExpandedView(
             activity: c,
+            onOpenItem: { [weak center] item in
+                center?.onOpenCalendarItem?(item)
+            },
             onCompleteReminder: { [weak center] id in
                 NSLog("[Halo] ui: complete reminder tapped: %@", id)
                 center?.onCompleteReminder?(id)
@@ -1506,6 +1511,7 @@ struct WeatherExpandedView: View {
 
 struct CalendarExpandedView: View {
     let activity: CalendarActivity
+    var onOpenItem: (CalendarItem) -> Void = { _ in }
     var onCompleteReminder: (String) -> Void = { _ in }
 
     var body: some View {
@@ -1554,10 +1560,26 @@ struct CalendarExpandedView: View {
                     .frame(maxHeight: .infinity, alignment: .topLeading)
             } else {
                 HaloScrollView(
-                    items: upNextItems,
-                    rowHeight: 30
-                ) { item in
-                    calendarRow(item, now: now)
+                    items: CalendarMonitor.groupedByDate(upNextItems)
+                ) { group in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let label = CalendarMonitor.dateGroupLabel(for: group.date, relativeTo: now) {
+                            Text(label)
+                                .font(.system(size: 10, weight: .bold))
+                                .tracking(1.2)
+                                .foregroundColor(.white.opacity(0.48))
+                                .padding(.top, 8)
+                                .overlay(alignment: .top) {
+                                    Rectangle()
+                                        .fill(Color.white.opacity(0.12))
+                                        .frame(height: 1)
+                                }
+                        }
+
+                        ForEach(group.items) { item in
+                            calendarRow(item, now: now)
+                        }
+                    }
                 }
             }
         }
@@ -1614,33 +1636,41 @@ struct CalendarExpandedView: View {
 
     private func calendarRow(_ item: CalendarItem, now: Date) -> some View {
         HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(item.isReminder ? Color.orange.opacity(0.18) : Color.blue.opacity(0.18))
-                    .frame(width: 30, height: 30)
-                Image(systemName: item.isReminder ? "checklist" : "calendar")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(item.isReminder ? .orange : .blue)
-            }
+            Button {
+                onOpenItem(item)
+            } label: {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(item.isReminder ? Color.orange.opacity(0.18) : Color.blue.opacity(0.18))
+                            .frame(width: 30, height: 30)
+                        Image(systemName: item.isReminder ? "checklist" : "calendar")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(item.isReminder ? .orange : .blue)
+                    }
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                HStack(spacing: 5) {
-                    Text(CalendarMonitor.exactTime(for: item, now: now))
-                    if !item.calendarName.isEmpty {
-                        Text("·")
-                        Text(item.calendarName)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
                             .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(CalendarMonitor.timeOnly(for: item))
+                            if !item.calendarName.isEmpty {
+                                Text("·")
+                                Text(item.calendarName)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
                     }
                 }
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(0.55))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-
-            Spacer(minLength: 0)
+            .buttonStyle(.plain)
+            .help(item.isReminder ? "Open in Reminders" : "Open in Calendar")
 
             if item.isReminder {
                 if item.startDate < now {
@@ -1663,8 +1693,7 @@ struct CalendarExpandedView: View {
             }
         }
         .frame(height: 30)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 

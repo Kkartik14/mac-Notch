@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 @preconcurrency import EventKit
 
 enum CalendarItemKind: Equatable {
@@ -34,19 +35,29 @@ struct CalendarActivity: Equatable {
     }
 }
 
+struct CalendarDateGroup: Equatable, Identifiable {
+    let date: Date
+    let items: [CalendarItem]
+
+    var id: Date {
+        date
+    }
+}
+
 /// Reads upcoming Calendar events and incomplete Reminders through EventKit.
 ///
 /// Calendar and Reminders are independent permissions. If the user grants
 /// only one of them, Halo still shows the data from the granted source.
 final class CalendarMonitor: NSObject {
     static let lookaheadDays = 7
-    static let maximumItems = 5
+    static let maximumItems = 25
     static let startAlertDuration: TimeInterval = 4
 
     private let store = EKEventStore()
     private var refreshTimer: Timer?
     private var eventStartTimer: Timer?
     private var eventStoreObserver: NSObjectProtocol?
+    private var systemObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var permissionTask: Task<Void, Never>?
     private var refreshGeneration = 0
     private var lastItems: [CalendarItem] = []
@@ -89,6 +100,7 @@ final class CalendarMonitor: NSObject {
                 self?.refresh()
             }
         }
+        installSystemObservers()
 
         updateAccessState()
         refresh()
@@ -106,6 +118,7 @@ final class CalendarMonitor: NSObject {
             NotificationCenter.default.removeObserver(eventStoreObserver)
             self.eventStoreObserver = nil
         }
+        removeSystemObservers()
         refreshGeneration &+= 1
         lastObservedItems.removeAll()
     }
@@ -206,19 +219,72 @@ final class CalendarMonitor: NSObject {
                     return true
                 }
             }
-            .sorted { lhs, rhs in
-                if lhs.startDate != rhs.startDate {
-                    return lhs.startDate < rhs.startDate
-                }
-                // If an event and reminder share a due time, show the event
-                // first and keep the ordering deterministic.
-                if lhs.kind != rhs.kind {
-                    return lhs.kind == .event
-                }
-                return lhs.id < rhs.id
-            }
+            .sorted(by: itemComesBefore)
             .prefix(limit)
             .map { $0 }
+    }
+
+    /// Groups already-selected items by their local calendar day while
+    /// preserving the deterministic time/type ordering within each group.
+    static func groupedByDate(
+        _ items: [CalendarItem],
+        calendar: Calendar = .current
+    ) -> [CalendarDateGroup] {
+        let grouped = Dictionary(grouping: items) { calendar.startOfDay(for: $0.startDate) }
+        return grouped.keys.sorted().compactMap { date in
+            guard let items = grouped[date] else { return nil }
+            return CalendarDateGroup(date: date, items: items.sorted(by: itemComesBefore))
+        }
+    }
+
+    /// Returns nil for today's group so today's rows stay compact. Later
+    /// groups carry the date once in the section header.
+    static func dateGroupLabel(
+        for date: Date,
+        relativeTo now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String? {
+        let day = calendar.startOfDay(for: date)
+        let today = calendar.startOfDay(for: now)
+        guard !calendar.isDate(day, inSameDayAs: today) else { return nil }
+
+        var dateStyle = Date.FormatStyle().month(.abbreviated).day()
+        dateStyle.calendar = calendar
+        dateStyle.timeZone = calendar.timeZone
+        let dateText = day.formatted(dateStyle).uppercased()
+
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: today),
+           calendar.isDate(day, inSameDayAs: tomorrow) {
+            return "TOMORROW · \(dateText)"
+        }
+
+        if day < today {
+            return "OVERDUE · \(dateText)"
+        }
+
+        var weekdayStyle = Date.FormatStyle().weekday(.abbreviated)
+        weekdayStyle.calendar = calendar
+        weekdayStyle.timeZone = calendar.timeZone
+        return "\(day.formatted(weekdayStyle).uppercased()) · \(dateText)"
+    }
+
+    /// Row metadata intentionally omits the date; dateGroupLabel supplies it
+    /// once per non-today section in the expanded Up Next rail.
+    static func timeOnly(for item: CalendarItem) -> String {
+        guard !item.isAllDay else { return "All day" }
+        return item.startDate.formatted(date: .omitted, time: .shortened)
+    }
+
+    private static func itemComesBefore(_ lhs: CalendarItem, _ rhs: CalendarItem) -> Bool {
+        if lhs.startDate != rhs.startDate {
+            return lhs.startDate < rhs.startDate
+        }
+        // If an event and reminder share a due time, show the event first and
+        // keep the ordering deterministic.
+        if lhs.kind != rhs.kind {
+            return lhs.kind == .event
+        }
+        return lhs.id < rhs.id
     }
 
     /// Returns only events that crossed their start boundary between two
@@ -337,6 +403,64 @@ final class CalendarMonitor: NSObject {
     private func updateAccessState() {
         eventAccess = Self.hasFullAccess(to: .event)
         reminderAccess = Self.hasFullAccess(to: .reminder)
+    }
+
+    /// Timers do not provide a reliable boundary after sleep or a system clock
+    /// change. Refresh immediately so the next item and its start timer are
+    /// rebuilt from the new wall-clock state.
+    private func installSystemObservers() {
+        guard systemObservers.isEmpty else { return }
+
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        let defaultCenter = NotificationCenter.default
+
+        let wake = workspaceCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshAfterSystemChange("wake")
+        }
+        let session = workspaceCenter.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshAfterSystemChange("session active")
+        }
+        let clock = defaultCenter.addObserver(
+            forName: .NSSystemClockDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshAfterSystemChange("system clock change")
+        }
+        let locale = defaultCenter.addObserver(
+            forName: NSLocale.currentLocaleDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshAfterSystemChange("locale or time-zone change")
+        }
+
+        systemObservers = [
+            (workspaceCenter, wake),
+            (workspaceCenter, session),
+            (defaultCenter, clock),
+            (defaultCenter, locale)
+        ]
+    }
+
+    private func removeSystemObservers() {
+        for (center, token) in systemObservers {
+            center.removeObserver(token)
+        }
+        systemObservers.removeAll()
+    }
+
+    private func refreshAfterSystemChange(_ reason: String) {
+        NSLog("[Halo] calendar: refreshing after %@", reason)
+        refresh()
     }
 
     private static func hasFullAccess(to type: EKEntityType) -> Bool {

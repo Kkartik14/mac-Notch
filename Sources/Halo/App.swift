@@ -177,6 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         haloController.center.onCompleteReminder = { [weak self] id in
             self?.calendarMonitor.completeReminder(id: id)
         }
+        haloController.center.onOpenCalendarItem = { [weak self] item in
+            self?.openCalendarItem(item)
+        }
 
         // Now Playing — track changes pop the card open and it STAYS open
         // until dismissed. No auto-collapse: collapsing on its own is what
@@ -328,6 +331,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             NSLog("[Halo] replay: no url for %@", track.title)
         }
+    }
+
+    /// Open the native app for a Calendar or Reminder row. EventKit remains
+    /// read-only here; completion is the only write action Halo performs.
+    private func openCalendarItem(_ item: CalendarItem) {
+        let bundleIdentifier = item.isReminder ? "com.apple.reminders" : "com.apple.iCal"
+        guard let appURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: bundleIdentifier
+        ) else {
+            NSLog("[Halo] calendar: native app unavailable for %@", item.title)
+            return
+        }
+
+        NSLog("[Halo] calendar: opening %@ for %@", item.isReminder ? "Reminders" : "Calendar", item.title)
+        NSWorkspace.shared.open(appURL)
     }
 
     private func makeContextMenu() -> NSMenu {

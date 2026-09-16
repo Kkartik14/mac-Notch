@@ -60,6 +60,61 @@ final class CalendarMonitorTests: XCTestCase {
         XCTAssertEqual(result.map(\.title), ["First", "Second", "Third"])
     }
 
+    func testDefaultRailCapAllowsTwentyFiveItems() {
+        let items = (0..<30).map { index in
+            event(id: "event-\(index)", title: "Event \(index)", offset: TimeInterval(index + 1) * 60)
+        }
+
+        let result = CalendarMonitor.upcomingItems(
+            items,
+            now: now,
+            through: now.addingTimeInterval(24 * 60 * 60),
+            limit: CalendarMonitor.maximumItems
+        )
+
+        XCTAssertEqual(CalendarMonitor.maximumItems, 25)
+        XCTAssertEqual(result.count, 25)
+        XCTAssertEqual(result.last?.title, "Event 24")
+    }
+
+    func testGroupedByDatePreservesDayAndItemOrder() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let items = [
+            event(id: "later", title: "Later", offset: 2 * 24 * 60 * 60),
+            event(id: "tomorrow", title: "Tomorrow", offset: 24 * 60 * 60),
+            event(id: "today", title: "Today", offset: 60),
+            event(id: "tomorrow-early", title: "Tomorrow early", offset: 24 * 60 * 60 + 60)
+        ]
+
+        let groups = CalendarMonitor.groupedByDate(items, calendar: calendar)
+
+        XCTAssertEqual(groups.count, 3)
+        XCTAssertEqual(groups.map { $0.items.map(\.title) }, [
+            ["Today"],
+            ["Tomorrow", "Tomorrow early"],
+            ["Later"]
+        ])
+    }
+
+    func testDateGroupLabelOmitsTodayAndNamesLaterDays() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+        let later = calendar.date(byAdding: .day, value: 2, to: today)!
+
+        XCTAssertNil(CalendarMonitor.dateGroupLabel(for: today, relativeTo: now, calendar: calendar))
+        XCTAssertTrue(
+            CalendarMonitor.dateGroupLabel(for: tomorrow, relativeTo: now, calendar: calendar)?
+                .hasPrefix("TOMORROW ·") == true
+        )
+        XCTAssertTrue(
+            CalendarMonitor.dateGroupLabel(for: later, relativeTo: now, calendar: calendar)?
+                .contains(" · ") == true
+        )
+    }
+
     func testCompletedAndPastItemsAreNotShown() {
         let items = [
             event(id: "past", title: "Finished", offset: -2 * 60 * 60, duration: 60),
