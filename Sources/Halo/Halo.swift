@@ -873,7 +873,7 @@ struct HaloView: View {
         case .calendar:
             inlineDot(for: activity)
         case .codex:
-            inlineDot(for: activity)
+            OpenAIMarkView(size: 20)
         default:
             inlineDot(for: activity)
         }
@@ -1077,6 +1077,8 @@ struct HaloView: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
+        } else if case .codex = activity {
+            OpenAIMarkView(size: size)
         } else {
             let (name, color) = iconSpec(for: activity)
             ZStack {
