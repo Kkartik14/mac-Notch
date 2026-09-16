@@ -11,16 +11,16 @@
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>CFBundleDisplayName</key>
-    <string>Alcove</string>
+    <string>Halo</string>
     <key>CFBundleIdentifier</key>
-    <string>com.tryalcove.alcove</string>
+    <string>com.tryhalo.halo</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Alcove shows the current weather in the island.</string>
+    <string>Halo shows the current weather in the activity surface.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Alcove reads the current track from Music and Spotify to show it in the island.</string>
+    <string>Halo reads the current track from Music and Spotify to show it in the activity surface.</string>
 </dict>
 </plist>

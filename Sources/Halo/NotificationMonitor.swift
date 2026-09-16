@@ -79,7 +79,7 @@ final class NotificationMonitor: ObservableObject {
         guard let fresh = records(newerThan: baseline) else {
             if !warnedNoAccess {
                 warnedNoAccess = true
-                NSLog("[Alcove] notifications: store unreadable (no Full Disk Access?) — demo only")
+                NSLog("[Halo] notifications: store unreadable (no Full Disk Access?) — demo only")
             }
             return
         }
@@ -87,7 +87,7 @@ final class NotificationMonitor: ObservableObject {
         for (recID, note) in fresh {
             lastSeenID = max(lastSeenID ?? 0, recID)
             if !note.title.isEmpty || !note.body.isEmpty {
-                NSLog("[Alcove] notifications: %@ / %@", note.appIdentifier, note.title)
+                NSLog("[Halo] notifications: %@ / %@", note.appIdentifier, note.title)
                 onNew?(note)
             }
         }
@@ -130,7 +130,7 @@ final class NotificationMonitor: ObservableObject {
             let data = Data(bytes: blob, count: len)
             if let note = Self.parse(data: data, appIdentifier: appID) {
                 // drop our own noise
-                if appID == "com.tryalcove.alcove" { continue }
+                if appID == "com.tryhalo.halo" { continue }
                 out.append((recID, note))
             }
         }
@@ -167,7 +167,7 @@ final class NotificationMonitor: ObservableObject {
         return name
     }
 
-    /// App icon bytes for the island, nil when unresolvable (view falls back).
+    /// App icon bytes for the halo, nil when unresolvable (view falls back).
     func iconData(for bundleID: String) -> Data? {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
         let img = NSWorkspace.shared.icon(forFile: url.path)

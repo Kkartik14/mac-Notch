@@ -17,7 +17,7 @@ final class MusicAppMonitor: ObservableObject {
     var onUpdate: ((NowPlayingActivity, NSImage?) -> Void)?
     var onClear: (() -> Void)?
     /// Fired on every poll for the same track (progress corrections).
-    /// Must update the island silently — never expand.
+    /// Must update the halo silently — never expand.
     var onProgress: ((TimeInterval, TimeInterval, Bool) -> Void)?
     /// Up Next queue, arriving after the card (playlist reads are slow).
     var onQueue: (([UpNextItem]) -> Void)?
@@ -64,17 +64,17 @@ final class MusicAppMonitor: ObservableObject {
         end tell
         """
         guard let script = NSAppleScript(source: source) else {
-            NSLog("[Alcove] music: script compile failed")
+            NSLog("[Halo] music: script compile failed")
             return
         }
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)
         if let error {
-            NSLog("[Alcove] music: script error: %@", error)
+            NSLog("[Halo] music: script error: %@", error)
             return
         }
         guard result.descriptorType != typeNull else {
-            NSLog("[Alcove] music: null result")
+            NSLog("[Halo] music: null result")
             return
         }
         let text = result.stringValue ?? ""
@@ -90,7 +90,7 @@ final class MusicAppMonitor: ObservableObject {
         }
         let parts = text.components(separatedBy: "\u{1F}")
         guard parts.count >= 6 else {
-            NSLog("[Alcove] music: malformed payload (%d parts)", parts.count)
+            NSLog("[Halo] music: malformed payload (%d parts)", parts.count)
             return
         }
         let title = parts[0], artist = parts[1], album = parts[2]
@@ -147,7 +147,7 @@ final class MusicAppMonitor: ObservableObject {
             artworkData: artworkData
         )
         current = activity
-        NSLog("[Alcove] music: update %@ - %@ (%@)", title, artist, isPlaying ? "playing" : "paused")
+        NSLog("[Halo] music: update %@ - %@ (%@)", title, artist, isPlaying ? "playing" : "paused")
         onUpdate?(activity, image)
         fetchUpNext()
     }
@@ -206,7 +206,7 @@ final class MusicAppMonitor: ObservableObject {
             var error: NSDictionary?
             let result = script.executeAndReturnError(&error)
             guard error == nil, result.descriptorType != typeNull else {
-                NSLog("[Alcove] music: up-next script failed")
+                NSLog("[Halo] music: up-next script failed")
                 return
             }
             let text = result.stringValue ?? ""
@@ -216,7 +216,7 @@ final class MusicAppMonitor: ObservableObject {
                 // (PlaybackHistoryMonitor) owns these now — album-order
                 // guessing showed wrong songs for playlist mixes, so the
                 // store fallback is deleted, not demoted.
-                NSLog("[Alcove] music: up-next unavailable via scripting (catalog context)")
+                NSLog("[Halo] music: up-next unavailable via scripting (catalog context)")
                 return
             }
             let (playlistID, items) = Self.parseUpNext(text)
@@ -225,7 +225,7 @@ final class MusicAppMonitor: ObservableObject {
                 cur.upNext = items
                 self.current = cur
             }
-            NSLog("[Alcove] music: up-next %d tracks (playlist %@)", items.count, playlistID ?? "-")
+            NSLog("[Halo] music: up-next %d tracks (playlist %@)", items.count, playlistID ?? "-")
             self.onQueue?(items)
         }
     }
@@ -274,14 +274,14 @@ final class MusicAppMonitor: ObservableObject {
 
     private func command(_ verb: String) {
         guard Self.isMusicRunning else {
-            NSLog("[Alcove] music: command %@ ignored, Music not running", verb)
+            NSLog("[Halo] music: command %@ ignored, Music not running", verb)
             return
         }
-        NSLog("[Alcove] music: command %@", verb)
+        NSLog("[Halo] music: command %@", verb)
         let source = "tell application \"Music\" to \(verb)"
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
-        if let error { NSLog("[Alcove] music: command error: %@", error) }
+        if let error { NSLog("[Halo] music: command error: %@", error) }
     }
 
     func playPause() {
@@ -301,12 +301,12 @@ final class MusicAppMonitor: ObservableObject {
     func seek(to seconds: TimeInterval) {
         guard Self.isMusicRunning else { return }
         let clamped = max(0, seconds)
-        NSLog("[Alcove] music: seek %.1f", clamped)
+        NSLog("[Halo] music: seek %.1f", clamped)
         let source = "tell application \"Music\" to set player position to \(clamped)"
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
-        if let error { NSLog("[Alcove] music: seek error: %@", error) }
-        // Refresh immediately so the island reflects the jump.
+        if let error { NSLog("[Halo] music: seek error: %@", error) }
+        // Refresh immediately so the halo reflects the jump.
         refresh()
     }
 }

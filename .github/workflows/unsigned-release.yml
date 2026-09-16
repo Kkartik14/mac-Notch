@@ -1,0 +1,33 @@
+name: Unsigned beta release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build and package unsigned release
+        run: ./release.sh
+
+      - name: Verify archive checksum
+        working-directory: dist
+        run: shasum -a 256 -c Halo-*.zip.sha256
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/Halo-*.zip \
+            dist/Halo-*.zip.sha256 \
+            --title "Halo $GITHUB_REF_NAME" \
+            --notes "Unsigned beta build. macOS may require a one-time right-click Open approval."

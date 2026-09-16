@@ -113,7 +113,7 @@ final class PlaybackHistoryMonitor: ObservableObject {
                 return ma > mb
             }
         guard let newest = dirs.first else {
-            NSLog("[Alcove] history: no sessions visible (entries=%d)", entries.count)
+            NSLog("[Halo] history: no sessions visible (entries=%d)", entries.count)
             return
         }
         let newestMtime = (try? fm.attributesOfItem(atPath: newest.path))?[.modificationDate] as? Date ?? .distantPast
@@ -130,7 +130,7 @@ final class PlaybackHistoryMonitor: ObservableObject {
             if tracks.count >= 8 { break }
         }
         if tracks.isEmpty {
-            NSLog("[Alcove] history: %d sessions but 0 parsed", dirs.count)
+            NSLog("[Halo] history: %d sessions but 0 parsed", dirs.count)
         }
         // Queue resolution runs even when the track list is unchanged: the
         // newest session dir is often partial on first sight and completes
@@ -138,7 +138,7 @@ final class PlaybackHistoryMonitor: ObservableObject {
         resolveQueue(dirs: dirs, sessionKey: key)
         guard tracks != self.tracks else { return }
         self.tracks = tracks
-        NSLog("[Alcove] history: %d recent tracks", tracks.count)
+        NSLog("[Halo] history: %d recent tracks", tracks.count)
         onTracksChanged?(tracks)
         fetchMissingArtwork()
         resolveQueue(dirs: dirs, sessionKey: key)
@@ -200,12 +200,12 @@ final class PlaybackHistoryMonitor: ObservableObject {
         let contextTitle = ctxDir.flatMap { Self.parseSession($0)?.title } ?? ""
         guard let (currentID, orderedIDs) = ctx,
               let at = orderedIDs.firstIndex(of: currentID) else {
-            NSLog("[Alcove] queue: no position in session container")
+            NSLog("[Halo] queue: no position in session container")
             return
         }
         let next = Array(orderedIDs.dropFirst(at + 1).prefix(3))
         guard !next.isEmpty else {
-            NSLog("[Alcove] queue: at container end")
+            NSLog("[Halo] queue: at container end")
             lastQueueKey = sessionKey
             onQueueChanged?([], contextTitle)
             return
@@ -221,7 +221,7 @@ final class PlaybackHistoryMonitor: ObservableObject {
             guard let self, let data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let results = json["results"] as? [[String: Any]] else {
-                NSLog("[Alcove] queue: lookup failed")
+                NSLog("[Halo] queue: lookup failed")
                 DispatchQueue.main.async { [weak self] in
                     if self?.resolvingKey == sessionKey { self?.resolvingKey = nil }
                 }
@@ -243,7 +243,7 @@ final class PlaybackHistoryMonitor: ObservableObject {
                 return UpNextItem(title: t, artist: (r["artistName"] as? String) ?? "", artworkURL: art, url: r["url"] as? String)
             }
             guard !items.isEmpty else {
-                NSLog("[Alcove] queue: lookup empty")
+                NSLog("[Halo] queue: lookup empty")
                 DispatchQueue.main.async { [weak self] in
                     if self?.resolvingKey == sessionKey { self?.resolvingKey = nil }
                 }
@@ -256,7 +256,7 @@ final class PlaybackHistoryMonitor: ObservableObject {
                 if self.resolvingKey == sessionKey { self.resolvingKey = nil }
                 guard self.lastQueueKey != sessionKey else { return }
                 self.lastQueueKey = sessionKey
-                NSLog("[Alcove] queue: %d tracks (session order): %@", items.count,
+                NSLog("[Halo] queue: %d tracks (session order): %@", items.count,
                       items.map { $0.title }.joined(separator: " | ") as NSString)
                 self.lastAnnouncedQueue = items
                 self.lastQueueContextTitle = contextTitle

@@ -79,7 +79,7 @@ final class FocusMonitor: ObservableObject {
         if signature == lastSignature { return }
         lastSignature = signature
         current = state
-        NSLog("[Alcove] focus: update %@ (%@)", state.name, state.modeIdentifier)
+        NSLog("[Halo] focus: update %@ (%@)", state.name, state.modeIdentifier)
         onUpdate?(state)
     }
 
@@ -91,7 +91,7 @@ final class FocusMonitor: ObservableObject {
         else {
             if !warnedNoAccess {
                 warnedNoAccess = true
-                NSLog("[Alcove] focus: state unreadable (no Full Disk Access?) — manual modes only")
+                NSLog("[Halo] focus: state unreadable (no Full Disk Access?) — manual modes only")
             }
             return nil
         }

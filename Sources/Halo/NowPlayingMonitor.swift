@@ -76,7 +76,7 @@ final class NowPlayingMonitor: ObservableObject {
         let signature = "\(title)|\(artist)|\(album)|\(rate > 0 ? 1 : 0)"
         if signature == lastSignature {
             // Same track: silently refresh progress/playing state without
-            // firing onUpdate (which would re-expand/hijack the island).
+            // firing onUpdate (which would re-expand/hijack the halo).
             if var cur = current {
                 cur.elapsed = elapsed
                 cur.duration = duration
