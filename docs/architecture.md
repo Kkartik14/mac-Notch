@@ -5,7 +5,7 @@
 Halo is organized as a set of source-specific monitors feeding one in-memory activity coordinator:
 
 ~~~text
-macOS / Music / Spotify / network
+macOS / Music / Spotify / Calendar / Reminders / network
              ↓
         source monitors
              ↓ callbacks
@@ -33,13 +33,14 @@ The app intentionally has no NSStatusItem. The halo itself is the visible app su
 
 ## Activity state
 
-HaloActivity has five cases:
+HaloActivity has six cases:
 
 - nowPlaying
 - charging
 - notification
 - focus
 - weather
+- calendar
 
 Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. HaloCenter.activities stores up to four activities. The array is ordered from lowest to highest priority; the last element is the activity shown in the collapsed pill.
 
@@ -50,6 +51,7 @@ The current ranks are:
 | 4 | Notification | Transient event that should be visible immediately. |
 | 3 | Now Playing | Primary live activity. |
 | 2 | Focus | Ambient system state. |
+| 2 | Calendar | Upcoming time-sensitive events and reminders. |
 | 1 | Charging | Ambient power state, with a temporary plug-in override. |
 | 0 | Weather | Quiet ambient information. |
 
@@ -128,6 +130,12 @@ If no queue is available, the UI uses the recent-track list. Queue rows with pla
 ### Notifications
 
 [NotificationMonitor](../Sources/Halo/NotificationMonitor.swift) opens the usernoted SQLite database read-only. It records the maximum notification ID at startup, then emits only newer rows. Payloads are property lists containing app identifier, title, subtitle, body, and date. A directory watcher and four-second poll cover both normal and atomic database updates.
+
+### Calendar and Reminders
+
+[CalendarMonitor](../Sources/Halo/CalendarMonitor.swift) owns one `EKEventStore` and keeps Calendar events and incomplete Reminders separate from the rest of the UI as value types. It requests Calendar and Reminders access independently, so granting one does not require the other. Events are fetched from the beginning of today through the next seven days; reminders with due dates are fetched asynchronously and merged into one sorted list capped at 25 items, so overdue incomplete reminders remain visible until completion. An `EKEventStoreChanged` observer, a one-minute timer, and system wake/clock/locale observers cover edits, sleep/wake, and ordinary clock changes. The monitor also schedules a one-shot timer for the next future timed event, then compares the previous and current value snapshots to emit exactly one start transition. This avoids a high-frequency poller and avoids alerting for an event first seen after the app launches while it is already in progress.
+
+The expanded Calendar card gives the next item a fixed detail column and places the remaining returned items in a bounded, vertically scrollable Up Next column. All vertical rails use the shared [`HaloScrollView`](../Sources/Halo/HaloScrollView.swift), which owns the `ScrollView`, lazy stack, spacing, viewport limit, and indicator policy; [`HaloScrollMetrics`](../Sources/Halo/HaloScrollView.swift) keeps fixed-row sizing and scroll-threshold calculations pure and testable. Clicking an event or reminder title/time builds the owning app's native item URL (`ical://ekevent/...` or `x-apple-reminderkit://REMCDReminder/...`) and falls back to opening the app if macOS rejects the deep link. Event rows show start/end ranges, location controls open `maps://` searches in Apple Maps, and HTTP(S) EventKit URLs appear as optional meeting-link actions. The completion button remains a separate reminder-only action. Relative time is rendered through a SwiftUI `TimelineView`, so the countdown changes without rewriting the EventKit activity. A start transition expands the card once for four seconds and then leaves the live calendar pill in place; it does not create an event or schedule a duplicate system notification. Reminder rows expose a completion button; `completeReminder` resolves the EventKit identifier, saves `isCompleted = true`, and refreshes the activity. Missing permissions, malformed items, and reminders without due dates are ignored quietly.
 
 ## Threading assumptions
 

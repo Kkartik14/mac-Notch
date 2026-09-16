@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let weatherMonitor = WeatherMonitor()
     private let focusMonitor = FocusMonitor()
     private let notificationMonitor = NotificationMonitor()
+    private let calendarMonitor = CalendarMonitor()
     private let historyMonitor = PlaybackHistoryMonitor()
     private var wasPluggedIn = false
 
@@ -143,11 +144,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showNotification: { [weak self] in self?.showNotification() },
             showWeather: { [weak self] in self?.showWeather() },
             showFocus: { [weak self] in self?.showFocus() },
+            showCalendar: { [weak self] in self?.showCalendar() },
             previewPillMusic: { [weak self] in self?.previewPill("nowPlaying") },
             previewPillWeather: { [weak self] in self?.previewPill("weather") },
             previewPillCharging: { [weak self] in self?.previewPill("charging") },
             previewPillNotify: { [weak self] in self?.previewPill("notification") },
             previewPillFocus: { [weak self] in self?.previewPill("focus") },
+            previewPillCalendar: { [weak self] in self?.previewPill("calendar") },
             expandTop: { [weak self] in self?.haloController.expandTop() },
             dismissAll: { [weak self] in self?.haloController.dismissAll() },
             openSettings: { [weak self] in self?.openSettings() },
@@ -170,6 +173,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         haloController.center.onPlayQueued = { [weak self] in self?.playQueued($0) }
         haloController.center.onReplayRecent = { [weak self] track in
             self?.replayRecent(track)
+        }
+        haloController.center.onCompleteReminder = { [weak self] id in
+            self?.calendarMonitor.completeReminder(id: id)
+        }
+        haloController.center.onOpenCalendarItem = { [weak self] item in
+            self?.openCalendarItem(item)
+        }
+        haloController.center.onOpenCalendarLocation = { [weak self] location in
+            self?.openCalendarLocation(location)
+        }
+        haloController.center.onOpenCalendarURL = { [weak self] url in
+            self?.openCalendarURL(url)
         }
 
         // Now Playing — track changes pop the card open and it STAYS open
@@ -246,6 +261,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Calendar and Reminders — EventKit requests each permission once,
+        // then keeps the activity current through store-change notifications
+        // and a one-minute clock refresh. Passive updates never expand the UI.
+        calendarMonitor.start(
+            onUpdate: { [weak self] activity in
+                self?.haloController.show(.calendar(activity), autoDismissAfter: nil, expand: false)
+            },
+            onClear: { [weak self] in
+                self?.haloController.center.dismiss("calendar")
+            },
+            onEventStart: { [weak self] activity, event in
+                NSLog("[Halo] calendar: event started: %@", event.title)
+                self?.haloController.show(
+                    .calendar(activity),
+                    autoDismissAfter: nil,
+                    expand: true,
+                    collapseAfter: CalendarMonitor.startAlertDuration
+                )
+            }
+        )
+
         // Weather — quiet pill, refreshes every 10 min. Never force-expands.
         weatherMonitor.start { [weak self] activity in
             self?.haloController.show(.weather(activity), autoDismissAfter: nil, expand: false)
@@ -303,6 +339,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Open the exact Calendar or Reminder item. EventKit remains read-only
+    /// here; completion is the only write action Halo performs.
+    private func openCalendarItem(_ item: CalendarItem) {
+        if let itemURL = CalendarMonitor.nativeURL(for: item),
+           NSWorkspace.shared.open(itemURL) {
+            NSLog("[Halo] calendar: opening exact %@: %@", item.title, itemURL.absoluteString)
+            return
+        }
+
+        let bundleIdentifier = item.isReminder ? "com.apple.reminders" : "com.apple.iCal"
+        guard let appURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: bundleIdentifier
+        ) else {
+            NSLog("[Halo] calendar: native app unavailable for %@", item.title)
+            return
+        }
+
+        NSLog("[Halo] calendar: opening %@ for %@", item.isReminder ? "Reminders" : "Calendar", item.title)
+        NSWorkspace.shared.open(appURL)
+    }
+
+    private func openCalendarLocation(_ location: String) {
+        guard let url = CalendarMonitor.mapsURL(for: location),
+              NSWorkspace.shared.open(url) else {
+            NSLog("[Halo] calendar: Maps could not open location: %@", location)
+            return
+        }
+
+        NSLog("[Halo] calendar: opening location: %@", location)
+    }
+
+    private func openCalendarURL(_ url: URL) {
+        guard CalendarMonitor.externalURL(for: url) != nil else { return }
+
+        guard NSWorkspace.shared.open(url) else {
+            NSLog("[Halo] calendar: event URL could not open: %@", url.absoluteString)
+            return
+        }
+
+        NSLog("[Halo] calendar: opening event URL: %@", url.absoluteString)
+    }
+
     private func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(withTitle: "Halo", action: nil, keyEquivalent: "")
@@ -322,6 +400,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let focusItem = NSMenuItem(title: "Focus Card", action: #selector(showFocus), keyEquivalent: "f")
         focusItem.target = self
         menu.addItem(focusItem)
+        let calendarItem = NSMenuItem(title: "Calendar", action: #selector(showCalendar), keyEquivalent: "k")
+        calendarItem.target = self
+        menu.addItem(calendarItem)
         let pillMenu = NSMenu()
         let pillDefs: [(String, Selector)] = [
             ("Pill · Music", #selector(previewPillMusic)),
@@ -329,6 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("Pill · Charging", #selector(previewPillCharging)),
             ("Pill · Notify", #selector(previewPillNotify)),
             ("Pill · Focus", #selector(previewPillFocus)),
+            ("Pill · Calendar", #selector(previewPillCalendar)),
         ]
         for (title, sel) in pillDefs {
             let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
@@ -397,6 +479,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func showCalendar() {
+        calendarMonitor.refresh()
+        guard let current = calendarMonitor.current else { return }
+        haloController.show(.calendar(current), autoDismissAfter: nil, expand: true)
+    }
+
     /// Preview any activity as a settled pill (expand:false), live data when
     /// available, demo data otherwise. For testing pill designs.
     private func previewPill(_ id: String) {
@@ -424,6 +512,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 haloController.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: false)
             }
+        case "calendar":
+            var testCalendar = Calendar.current
+            testCalendar.timeZone = .current
+            let testStart = testCalendar.date(
+                bySettingHour: 17,
+                minute: 53,
+                second: 0,
+                of: Date()
+            ) ?? Date()
+            let sample = CalendarItem(
+                id: "preview:test-event",
+                title: "Test meeting",
+                startDate: testStart,
+                endDate: testStart.addingTimeInterval(60 * 60),
+                isAllDay: false,
+                location: "Halo preview",
+                calendarName: "Test calendar",
+                kind: .event,
+                isCompleted: false
+            )
+            haloController.show(.calendar(CalendarActivity(items: [sample])), autoDismissAfter: nil, expand: false)
         default:
             break
         }
@@ -434,6 +543,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func previewPillCharging() { previewPill("charging") }
     @objc private func previewPillNotify() { previewPill("notification") }
     @objc private func previewPillFocus() { previewPill("focus") }
+    @objc private func previewPillCalendar() { previewPill("calendar") }
 
     @objc private func showNotification() {
         haloController.show(.notification(NotificationActivity(

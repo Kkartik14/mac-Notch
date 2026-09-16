@@ -23,7 +23,8 @@ let package = Package(
                 .linkedFramework("UserNotifications"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreFoundation"),
-                .linkedFramework("CoreLocation")
+                .linkedFramework("CoreLocation"),
+                .linkedFramework("EventKit")
             ]
         ),
         .testTarget(

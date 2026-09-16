@@ -58,6 +58,15 @@ Grant Full Disk Access to the built app and restart it. The notification monitor
 
 Weather refreshes every ten minutes and throttles requests to at most once every five minutes.
 
+## Calendar or Reminders are missing
+
+- Allow Halo under **System Settings → Privacy & Security → Calendars** and/or **Reminders**.
+- Restart the built Halo.app after changing access if the activity does not appear.
+- Calendar and Reminders are separate permissions; granting Calendar does not grant Reminders.
+- Halo shows events from today through the next seven days and incomplete reminders with due dates. Overdue reminders remain until completed; reminders without a due date are intentionally skipped.
+- A timed event is shown as a passive pill before it starts and expands once at its start time. Halo does not play a sound or send a duplicate native Calendar notification.
+- Tap the circle on an expanded reminder row to mark it complete. The row disappears after EventKit confirms the save.
+
 ## Tests cannot find XCTest
 
 Use the full Xcode developer directory:
