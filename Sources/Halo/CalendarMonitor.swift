@@ -79,6 +79,7 @@ final class CalendarMonitor: NSObject {
     static let startAlertDuration: TimeInterval = 4
 
     private let store = EKEventStore()
+    private let permissionLedger: HaloPermissionRequestLedger
     private var refreshTimer: Timer?
     private var eventStartTimer: Timer?
     private var eventStoreObserver: NSObjectProtocol?
@@ -90,11 +91,21 @@ final class CalendarMonitor: NSObject {
     private var eventAccess = false
     private var reminderAccess = false
     private var warnedNoAccess = false
+    private var isStarted = false
+    private var includeEvents = true
+    private var includeReminders = true
+    private var configuredLookaheadDays = CalendarMonitor.lookaheadDays
+    private var configuredMaximumItems = CalendarMonitor.maximumItems
 
     private(set) var current: CalendarActivity?
     private var onUpdate: ((CalendarActivity) -> Void)?
     private var onClear: (() -> Void)?
     private var onEventStart: ((CalendarActivity, CalendarItem) -> Void)?
+
+    init(permissionLedger: HaloPermissionRequestLedger = .shared) {
+        self.permissionLedger = permissionLedger
+        super.init()
+    }
 
     deinit {
         stop()
@@ -108,6 +119,7 @@ final class CalendarMonitor: NSObject {
         self.onUpdate = onUpdate
         self.onClear = onClear
         self.onEventStart = onEventStart
+        isStarted = true
 
         refreshTimer?.invalidate()
         eventStartTimer?.invalidate()
@@ -133,6 +145,7 @@ final class CalendarMonitor: NSObject {
     }
 
     func stop() {
+        isStarted = false
         permissionTask?.cancel()
         permissionTask = nil
         refreshTimer?.invalidate()
@@ -148,6 +161,23 @@ final class CalendarMonitor: NSObject {
         lastObservedItems.removeAll()
     }
 
+    /// Applies persisted display/filter preferences without replacing the
+    /// EventKit store. The monitor remains safe to configure before start.
+    func configure(
+        includeEvents: Bool,
+        includeReminders: Bool,
+        lookaheadDays: Int,
+        maximumItems: Int
+    ) {
+        self.includeEvents = includeEvents
+        self.includeReminders = includeReminders
+        configuredLookaheadDays = min(30, max(1, lookaheadDays))
+        configuredMaximumItems = min(50, max(1, maximumItems))
+        if isStarted {
+            refresh()
+        }
+    }
+
     /// Re-read the current EventKit state. This is also used by the manual
     /// Calendar context-menu action after a permission decision.
     func refresh() {
@@ -156,20 +186,20 @@ final class CalendarMonitor: NSObject {
         let generation = refreshGeneration
         let now = Date()
         let eventSearchStart = Calendar.current.startOfDay(for: now)
-        let through = Calendar.current.date(byAdding: .day, value: Self.lookaheadDays, to: now)
-            ?? now.addingTimeInterval(TimeInterval(Self.lookaheadDays) * 24 * 60 * 60)
+        let through = Calendar.current.date(byAdding: .day, value: configuredLookaheadDays, to: now)
+            ?? now.addingTimeInterval(TimeInterval(configuredLookaheadDays) * 24 * 60 * 60)
 
         var items: [CalendarItem] = []
-        if eventAccess {
+        if eventAccess && includeEvents {
             // Start at the beginning of today so an event already in progress
             // is not lost just because its start time has passed.
             let predicate = store.predicateForEvents(withStart: eventSearchStart, end: through, calendars: nil)
             items.append(contentsOf: store.events(matching: predicate).compactMap(Self.item(from:)))
         }
 
-        guard reminderAccess else {
+        guard reminderAccess && includeReminders else {
             publish(
-                Self.upcomingItems(items, now: now, through: through, limit: Self.maximumItems),
+                Self.upcomingItems(items, now: now, through: through, limit: configuredMaximumItems),
                 observedItems: items,
                 now: now
             )
@@ -187,7 +217,7 @@ final class CalendarMonitor: NSObject {
                     combined,
                     now: now,
                     through: through,
-                    limit: Self.maximumItems
+                    limit: self.configuredMaximumItems
                 ), observedItems: combined, now: now)
             }
         }
@@ -207,6 +237,18 @@ final class CalendarMonitor: NSObject {
         } catch {
             NSLog("[Halo] calendar: failed to complete reminder %@: %@", calendarItemID, error.localizedDescription)
         }
+    }
+
+    /// Allows the Permissions page to retry an explicitly requested access
+    /// decision. Automatic startup requests use the one-time ledger below.
+    func requestAccess() {
+        requestAccessIfNeeded(force: true)
+    }
+
+    /// Requests only the EventKit entity selected by the user in Settings.
+    /// Calendar and Reminders remain independent TCC decisions.
+    func requestAccess(for type: EKEntityType) {
+        requestAccessIfNeeded(force: true, only: type)
     }
 
     /// Activity IDs are namespaced to keep event and reminder rows distinct;
@@ -580,7 +622,7 @@ final class CalendarMonitor: NSObject {
     }
 
     private static func hasFullAccess(to type: EKEntityType) -> Bool {
-        switch EKEventStore.authorizationStatus(for: type) {
+        switch authorizationStatus(for: type) {
         case .fullAccess, .authorized:
             return true
         default:
@@ -588,10 +630,25 @@ final class CalendarMonitor: NSObject {
         }
     }
 
-    private func requestAccessIfNeeded() {
-        let needsEvents = EKEventStore.authorizationStatus(for: .event) == .notDetermined
-        let needsReminders = EKEventStore.authorizationStatus(for: .reminder) == .notDetermined
+    static func authorizationStatus(for type: EKEntityType) -> EKAuthorizationStatus {
+        EKEventStore.authorizationStatus(for: type)
+    }
+
+    private func requestAccessIfNeeded(force: Bool = false, only: EKEntityType? = nil) {
+        let wantsEvents = only == nil || only == .event
+        let wantsReminders = only == nil || only == .reminder
+        let needsEvents = wantsEvents && Self.authorizationStatus(for: .event) == .notDetermined
+            && (force || (includeEvents && !permissionLedger.hasRequested(.calendarEvents)))
+        let needsReminders = wantsReminders && Self.authorizationStatus(for: .reminder) == .notDetermined
+            && (force || (includeReminders && !permissionLedger.hasRequested(.reminders)))
         guard needsEvents || needsReminders else { return }
+
+        if needsEvents {
+            permissionLedger.markRequested(.calendarEvents)
+        }
+        if needsReminders {
+            permissionLedger.markRequested(.reminders)
+        }
 
         permissionTask?.cancel()
         permissionTask = Task { @MainActor [weak self] in
@@ -615,6 +672,7 @@ final class CalendarMonitor: NSObject {
 
             self.updateAccessState()
             self.refresh()
+            self.permissionTask = nil
         }
     }
 

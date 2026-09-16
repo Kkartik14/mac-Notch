@@ -5,6 +5,7 @@ import CoreLocation
 /// Updates every 10 minutes.
 final class WeatherMonitor: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
+    private let permissionLedger: HaloPermissionRequestLedger
     private var callback: ((WeatherActivity) -> Void)?
     private var refreshTimer: Timer?
     private var pendingTask: URLSessionDataTask?
@@ -12,6 +13,11 @@ final class WeatherMonitor: NSObject, CLLocationManagerDelegate {
     private var lastActivity: WeatherActivity?
     /// Latest activity for previews, even if quiet.
     var current: WeatherActivity? { lastActivity }
+
+    init(permissionLedger: HaloPermissionRequestLedger = .shared) {
+        self.permissionLedger = permissionLedger
+        super.init()
+    }
 
     deinit {
         refreshTimer?.invalidate()
@@ -31,7 +37,8 @@ final class WeatherMonitor: NSObject, CLLocationManagerDelegate {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyKilometer
         let status = manager.authorizationStatus
-        if status == .notDetermined {
+        if status == .notDetermined && !permissionLedger.hasRequested(.location) {
+            permissionLedger.markRequested(.location)
             manager.requestWhenInUseAuthorization()
         } else if Self.locationAuthorized(status) {
             manager.startUpdatingLocation()
@@ -41,6 +48,18 @@ final class WeatherMonitor: NSObject, CLLocationManagerDelegate {
             self?.refresh()
         }
         refresh()
+    }
+
+    /// Explicit retry used by the Permissions page. Automatic startup access
+    /// is ledger-gated; an intentional user action may ask while undecided.
+    func requestLocationAccess() {
+        guard manager.authorizationStatus == .notDetermined else { return }
+        permissionLedger.markRequested(.location)
+        manager.requestWhenInUseAuthorization()
+    }
+
+    static func authorizationStatus() -> CLAuthorizationStatus {
+        CLLocationManager().authorizationStatus
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

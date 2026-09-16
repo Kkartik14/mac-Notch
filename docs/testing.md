@@ -44,7 +44,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 
 ## Test coverage
 
-[Tests/HaloTests/HaloTests.swift](../Tests/HaloTests/HaloTests.swift) and [CalendarTests.swift](../Tests/HaloTests/CalendarTests.swift) currently cover:
+[Tests/HaloTests/HaloTests.swift](../Tests/HaloTests/HaloTests.swift), [CalendarTests.swift](../Tests/HaloTests/CalendarTests.swift), and [SettingsTests.swift](../Tests/HaloTests/SettingsTests.swift) currently cover:
 
 - Initial, collapsed, expanded, auto-dismissed, and capped activity stacks.
 - Fixed-window origin math and the anti-slide center/top-edge contract.
@@ -54,6 +54,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 - Playback-indicator state: paused playback selects a still indicator, while playing playback selects the animated indicator; progress updates also propagate the paused state.
 - Notification property-list decoding and malformed payload rejection.
 - Calendar/Reminders filtering, ordering, in-progress event retention, overdue-reminder persistence, relative time labels, start-boundary detection, rail limits, exact native item URLs, Maps links, web-link filtering, and event duration ranges.
+- UserDefaults-backed preference restoration and persistence of the automatic permission-request ledger.
 - Shared scroll-rail geometry: row spacing, viewport clamping, empty input, invalid dimensions, and the overflow threshold.
 - Music scripting queue payload parsing.
 - Playback progress and recent-track attachment behavior.
@@ -72,7 +73,7 @@ The archive, queue, priority, positioning, and parser tests use synthetic or pur
 
 ## What is not covered yet
 
-- SwiftUI snapshot or UI automation tests.
+- SwiftUI snapshot or UI automation tests, including the tabbed Settings window.
 - End-to-end AppleScript tests against Music and Spotify.
 - Live Open-Meteo, iTunes Lookup, Spotify artwork, or CDN tests.
 - Full Disk Access success/failure integration tests.

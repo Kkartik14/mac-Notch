@@ -529,9 +529,11 @@ final class HaloWindowController: NSObject {
     private func hoverEntered() {
         hoverWork?.cancel()
         hoverWork = nil
-        guard !center.activities.isEmpty, center.expandedId == nil else { return }
+        guard HaloSettings.shared.hoverToExpand,
+              !center.activities.isEmpty,
+              center.expandedId == nil else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+            guard let self, HaloSettings.shared.hoverToExpand else { return }
             let loc = NSEvent.mouseLocation
             let inHit = self.visibleContentRect().map { $0.contains(loc) } ?? false
             let moved = self.mouseMovedRecently(threshold: 4)
@@ -563,14 +565,16 @@ final class HaloWindowController: NSObject {
     private func hoverExited() {
         hoverWork?.cancel()
         hoverWork = nil
+        guard HaloSettings.shared.collapseOnMouseLeave else { return }
         // Hover-away always settles the halo: whatever is expanded
         // collapses shortly after the mouse leaves (re-enter cancels).
         // Track-change cards additionally settle on their own 3s timer.
         guard let id = center.expandedId else { return }
         let work = DispatchWorkItem { [weak self] in
-            self?.center.collapse(id)
-            self?.hoverOpenedId = nil
-            self?.updateEventRouting()
+            guard let self, HaloSettings.shared.collapseOnMouseLeave else { return }
+            self.center.collapse(id)
+            self.hoverOpenedId = nil
+            self.updateEventRouting()
         }
         hoverWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -640,6 +644,7 @@ struct HaloView: View {
     @ObservedObject var center: HaloCenter
     var actions: HaloActions = HaloActions()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var settings = HaloSettings.shared
 
     // Halo top-surface dimensions tuned for the built-in display.
     // Closed hugs the camera housing (~185pt on 14-inch displays); open is wide.
@@ -660,6 +665,7 @@ struct HaloView: View {
         .spring(response: haloCloseResponse, dampingFraction: haloCloseDamping, blendDuration: 0)
     }
     private var morphSpring: Animation { isOpen ? openSpring : closeSpring }
+    private var motionReduced: Bool { reduceMotion || settings.reduceMotion }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -732,8 +738,8 @@ struct HaloView: View {
         }
         .preferredColorScheme(.dark)
         // Bouncy open, critically damped close.
-        .animation(morphSpring, value: center.expandedId)
-        .animation(.smooth, value: center.activities.count)
+        .animation(motionReduced ? nil : morphSpring, value: center.expandedId)
+        .animation(motionReduced ? nil : .smooth, value: center.activities.count)
     }
 
     private var preferredWidth: CGFloat {
@@ -752,11 +758,14 @@ struct HaloView: View {
     /// Fast content crossfade. The backdrop morphs at spring speed while
     /// content swaps underneath it quickly, so nothing smears or slides.
     private var contentSwap: AnyTransition {
-        .opacity.animation(.easeOut(duration: 0.12))
+        motionReduced ? .opacity : .opacity.animation(.easeOut(duration: 0.12))
     }
 
     private var openContentTransition: AnyTransition {
-        .scale(scale: 0.8, anchor: .top).combined(with: .opacity)
+        if motionReduced {
+            return .opacity
+        }
+        return .scale(scale: 0.8, anchor: .top).combined(with: .opacity)
             .animation(.smooth(duration: 0.35))
     }
 
@@ -822,7 +831,7 @@ struct HaloView: View {
     private func inlineLeading(for activity: HaloActivity) -> some View {
         switch activity {
         case .nowPlaying(let n):
-            if let data = n.artworkData, let img = NSImage(data: data) {
+            if settings.showArtwork, let data = n.artworkData, let img = NSImage(data: data) {
                 Image(nsImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -952,6 +961,18 @@ struct HaloView: View {
                 .font(.headline)
                 .foregroundColor(.white)
             Spacer()
+            Button {
+                actions.openSettings()
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.62))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open Halo Settings")
+            .accessibilityLabel("Open Halo Settings")
         }
     }
 
@@ -1078,6 +1099,7 @@ struct NowPlayingExpandedView: View {
     var onPlayQueued: (UpNextItem) -> Void = { _ in }
     var onReplay: (PlaybackHistoryMonitor.Track) -> Void = { _ in }
     @State private var dragFraction: Double?
+    @ObservedObject private var settings = HaloSettings.shared
 
     /// Elapsed shown while dragging (instant feedback), else live value.
     private var shownElapsed: TimeInterval {
@@ -1091,9 +1113,11 @@ struct NowPlayingExpandedView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-            artwork
-                .frame(width: 90, height: 90)
-                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            if settings.showArtwork {
+                artwork
+                    .frame(width: 90, height: 90)
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(activity.title)
                     .font(.system(size: 15, weight: .bold))
@@ -1139,9 +1163,9 @@ struct NowPlayingExpandedView: View {
                 }
                 .padding(.top, 2)
             }
-            if !activity.upNext.isEmpty {
+            if settings.showUpNext && !activity.upNext.isEmpty {
                 upNextRail
-            } else if !activity.recent.isEmpty {
+            } else if settings.showRecentlyPlayed && !activity.recent.isEmpty {
                 recentRail
             } else {
                 Spacer(minLength: 0)
@@ -1525,6 +1549,7 @@ struct CalendarExpandedView: View {
     var onCompleteReminder: (String) -> Void = { _ in }
     var onOpenLocation: (String) -> Void = { _ in }
     var onOpenURL: (URL) -> Void = { _ in }
+    @ObservedObject private var settings = HaloSettings.shared
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 60)) { context in
@@ -1619,7 +1644,9 @@ struct CalendarExpandedView: View {
                         .truncationMode(.tail)
 
                     HStack(spacing: 5) {
-                        Text(CalendarMonitor.exactTimeRange(for: item, now: now))
+                        Text(settings.calendarShowDuration
+                             ? CalendarMonitor.exactTimeRange(for: item, now: now)
+                             : CalendarMonitor.exactTime(for: item, now: now))
                             .lineLimit(1)
                         if !item.calendarName.isEmpty {
                             Text("·")
@@ -1637,7 +1664,8 @@ struct CalendarExpandedView: View {
             .help(item.isReminder ? "Open exact reminder in Reminders" : "Open exact event in Calendar")
             .padding(.top, 6)
 
-            if let location = item.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+            if settings.calendarShowLocations,
+               let location = item.location?.trimmingCharacters(in: .whitespacesAndNewlines),
                !location.isEmpty {
                 HStack(spacing: 6) {
                     Button {
@@ -1712,7 +1740,9 @@ struct CalendarExpandedView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
                         HStack(spacing: 5) {
-                            Text(CalendarMonitor.timeRange(for: item))
+                            Text(settings.calendarShowDuration
+                                 ? CalendarMonitor.timeRange(for: item)
+                                 : CalendarMonitor.timeOnly(for: item))
                             if !item.calendarName.isEmpty {
                                 Text("·")
                                 Text(item.calendarName)
@@ -1729,7 +1759,8 @@ struct CalendarExpandedView: View {
             .buttonStyle(.plain)
             .help(item.isReminder ? "Open exact reminder in Reminders" : "Open exact event in Calendar")
 
-            if let location = item.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+            if settings.calendarShowLocations,
+               let location = item.location?.trimmingCharacters(in: .whitespacesAndNewlines),
                !location.isEmpty {
                 Button {
                     onOpenLocation(location)
