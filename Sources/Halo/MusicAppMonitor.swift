@@ -11,9 +11,19 @@ final class MusicAppMonitor: ObservableObject {
     @Published private(set) var current: NowPlayingActivity?
 
     private var pollTimer: Timer?
-    private var lastSignature: String?
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var probeWorkItems: [DispatchWorkItem] = []
+    private var probeGeneration = 0
+    private var isSleeping = false
+    private var consecutiveRefreshFailures = 0
+    private var lastTrackSignature: String?
+    private var lastPlaybackState: Bool?
     private var lastArtworkSignature: String?
     private var lastArtworkData: Data?
+    private var currentTrackScript: NSAppleScript?
+    private var didLogScriptCompileFailure = false
+    private var queueArtworkWorkItems: [DispatchWorkItem] = []
+    private var queueArtworkGeneration = 0
     var onUpdate: ((NowPlayingActivity, NSImage?) -> Void)?
     var onClear: (() -> Void)?
     /// Fired on every poll for the same track (progress corrections).
@@ -22,6 +32,11 @@ final class MusicAppMonitor: ObservableObject {
     /// Up Next queue, arriving after the card (playlist reads are slow).
     var onQueue: (([UpNextItem]) -> Void)?
 
+    private static let playingPollInterval: TimeInterval = 1.0
+    private static let pausedPollInterval: TimeInterval = 3.0
+    private static let inactivePollInterval: TimeInterval = 15.0
+    private static let actionProbeDelays: [TimeInterval] = [0.10, 0.35, 0.80]
+
     static var isMusicRunning: Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music").isEmpty
     }
@@ -29,86 +44,80 @@ final class MusicAppMonitor: ObservableObject {
     deinit { stop() }
 
     func start() {
+        stop()
+        isSleeping = false
+        installWorkspaceObservers()
         refresh()
-        pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            self?.refresh()
-        }
     }
 
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
+        cancelProbeBurst()
+        cancelQueueArtwork()
+        isSleeping = true
+        let notificationCenter = NSWorkspace.shared.notificationCenter
+        workspaceObservers.forEach { notificationCenter.removeObserver($0) }
+        workspaceObservers.removeAll()
     }
 
     func refresh() {
+        guard !isSleeping else { return }
         guard Self.isMusicRunning else {
-            if current != nil {
-                current = nil
-                lastSignature = "empty"
-                onClear?()
-            }
+            clearCurrentIfNeeded()
+            consecutiveRefreshFailures = 0
+            scheduleNormalPoll()
             return
         }
-        // Unit separator delimited: title artist album state position duration.
-        // Built via `character id 31` so no raw control char lives in source.
-        let source = """
-        tell application "Music"
-          try
-            set t to current track
-            set dlm to character id 31
-            return (name of t) & dlm & (artist of t) & dlm & (album of t) & dlm & (player state as string) & dlm & (player position as string) & dlm & (duration of t as string)
-          on error
-            return "NOTRACK"
-          end try
-        end tell
-        """
-        guard let script = NSAppleScript(source: source) else {
-            NSLog("[Halo] music: script compile failed")
+
+        guard let script = currentTrackAppleScript() else {
+            scheduleRetry()
             return
         }
+
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)
         if let error {
             NSLog("[Halo] music: script error: %@", error)
+            scheduleRetry()
             return
         }
         guard result.descriptorType != typeNull else {
             NSLog("[Halo] music: null result")
+            scheduleRetry()
             return
         }
         let text = result.stringValue ?? ""
         if text == "NOTRACK" || text.isEmpty {
-            if current != nil || lastSignature != "empty" {
-                current = nil
-                lastArtworkData = nil
-                lastArtworkSignature = nil
-                lastSignature = "empty"
-                onClear?()
-            }
+            clearCurrentIfNeeded()
+            consecutiveRefreshFailures = 0
+            scheduleNormalPoll()
             return
         }
         let parts = text.components(separatedBy: "\u{1F}")
         guard parts.count >= 6 else {
             NSLog("[Halo] music: malformed payload (%d parts)", parts.count)
+            scheduleRetry()
             return
         }
         let title = parts[0], artist = parts[1], album = parts[2]
         if title.isEmpty && artist.isEmpty {
-            if current != nil {
-                current = nil
-                lastSignature = "empty"
-                onClear?()
-            }
+            clearCurrentIfNeeded()
+            consecutiveRefreshFailures = 0
+            scheduleNormalPoll()
             return
         }
         let isPlaying = parts[3] == "playing"
         let elapsed = TimeInterval(parts[4]) ?? 0
         let duration = TimeInterval(parts[5]) ?? 0
 
-        let signature = "\(title)|\(artist)|\(album)|\(isPlaying ? 1 : 0)"
-        if signature == lastSignature {
-            // Same track: silently refresh progress without re-expanding.
+        consecutiveRefreshFailures = 0
+        let trackSignature = "\(title)|\(artist)|\(album)"
+        if trackSignature == lastTrackSignature {
+            // A pause/resume is a playback-state change, not a new track.
+            // Keep it silent so the card does not expand or rebuild Up Next.
+            let playbackStateChanged = lastPlaybackState != isPlaying
+            lastPlaybackState = isPlaying
             if var cur = current {
                 cur.elapsed = elapsed
                 cur.duration = duration
@@ -116,19 +125,24 @@ final class MusicAppMonitor: ObservableObject {
                 current = cur
             }
             onProgress?(elapsed, duration, isPlaying)
+            if playbackStateChanged { cancelProbeBurst() }
+            scheduleNormalPoll()
             return
         }
-        lastSignature = signature
+        lastTrackSignature = trackSignature
+        lastPlaybackState = isPlaying
+        cancelProbeBurst()
+        cancelQueueArtwork()
 
         // Artwork only on track change — the bytes are large (~100KB+).
         var artworkData: Data?
         var image: NSImage?
-        if lastArtworkSignature != signature {
+        if lastArtworkSignature != trackSignature {
             let fetched = fetchArtwork()
             if let fetched, !fetched.isEmpty, NSImage(data: fetched) != nil {
                 artworkData = fetched
                 image = NSImage(data: fetched)
-                lastArtworkSignature = signature
+                lastArtworkSignature = trackSignature
                 lastArtworkData = fetched
             }
         } else {
@@ -150,6 +164,183 @@ final class MusicAppMonitor: ObservableObject {
         NSLog("[Halo] music: update %@ - %@ (%@)", title, artist, isPlaying ? "playing" : "paused")
         onUpdate?(activity, image)
         fetchUpNext()
+        scheduleNormalPoll()
+    }
+
+    /// Re-probe quickly after an action that should change Music's state.
+    /// The normal adaptive poll resumes after the short burst.
+    func refreshAfterUserAction() {
+        scheduleProbeBurst()
+    }
+
+    private func clearCurrentIfNeeded() {
+        let hadCurrent = current != nil
+        let needsReset = hadCurrent
+            || lastTrackSignature != "empty"
+            || lastPlaybackState != nil
+            || lastArtworkData != nil
+            || lastArtworkSignature != nil
+        guard needsReset else { return }
+        cancelQueueArtwork()
+        current = nil
+        lastTrackSignature = "empty"
+        lastPlaybackState = nil
+        lastArtworkData = nil
+        lastArtworkSignature = nil
+        if hadCurrent {
+            onClear?()
+        }
+    }
+
+    private func currentTrackAppleScript() -> NSAppleScript? {
+        if let currentTrackScript { return currentTrackScript }
+        let source = """
+        tell application "Music"
+          try
+            set t to current track
+            set dlm to character id 31
+            return (name of t) & dlm & (artist of t) & dlm & (album of t) & dlm & (player state as string) & dlm & (player position as string) & dlm & (duration of t as string)
+          on error
+            return "NOTRACK"
+          end try
+        end tell
+        """
+        guard let script = NSAppleScript(source: source) else {
+            if !didLogScriptCompileFailure {
+                NSLog("[Halo] music: script compile failed")
+                didLogScriptCompileFailure = true
+            }
+            return nil
+        }
+        currentTrackScript = script
+        return script
+    }
+
+    private func scheduleNormalPoll() {
+        let interval: TimeInterval
+        if !Self.isMusicRunning {
+            interval = Self.inactivePollInterval
+        } else if current?.isPlaying == true {
+            interval = Self.playingPollInterval
+        } else {
+            interval = Self.pausedPollInterval
+        }
+        schedulePoll(after: interval)
+    }
+
+    private func scheduleRetry() {
+        consecutiveRefreshFailures = min(consecutiveRefreshFailures + 1, 4)
+        let delay = min(Self.inactivePollInterval, pow(2.0, Double(consecutiveRefreshFailures - 1)))
+        schedulePoll(after: delay)
+    }
+
+    private func schedulePoll(after interval: TimeInterval) {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        guard !isSleeping else { return }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.pollTimer = nil
+            self.refresh()
+        }
+    }
+
+    private func scheduleProbeBurst(delays requestedDelays: [TimeInterval]? = nil) {
+        guard !isSleeping else { return }
+        cancelProbeBurst()
+        pollTimer?.invalidate()
+        pollTimer = nil
+        let generation = probeGeneration
+        let delays = requestedDelays ?? Self.actionProbeDelays
+        probeWorkItems = delays.map { delay in
+            let work = DispatchWorkItem { [weak self] in
+                guard let self,
+                      !self.isSleeping,
+                      self.probeGeneration == generation else { return }
+                self.refresh()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return work
+        }
+    }
+
+    private func cancelProbeBurst() {
+        probeGeneration &+= 1
+        probeWorkItems.forEach { $0.cancel() }
+        probeWorkItems.removeAll()
+    }
+
+    private enum WorkspaceEvent {
+        case launched
+        case terminated
+        case activated
+    }
+
+    private func installWorkspaceObservers() {
+        let notificationCenter = NSWorkspace.shared.notificationCenter
+        let appEvents: [(Notification.Name, WorkspaceEvent)] = [
+            (NSWorkspace.didLaunchApplicationNotification, .launched),
+            (NSWorkspace.didTerminateApplicationNotification, .terminated),
+            (NSWorkspace.didActivateApplicationNotification, .activated),
+        ]
+        for (name, event) in appEvents {
+            let observer = notificationCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                self?.handleWorkspaceEvent(event, notification: notification)
+            }
+            workspaceObservers.append(observer)
+        }
+        let sleepObserver = notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleSystemSleep()
+        }
+        workspaceObservers.append(sleepObserver)
+
+        let wakeNames: [Notification.Name] = [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification,
+        ]
+        for name in wakeNames {
+            let observer = notificationCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.handleSystemWake()
+            }
+            workspaceObservers.append(observer)
+        }
+    }
+
+    private func handleWorkspaceEvent(_ event: WorkspaceEvent, notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              application.bundleIdentifier == "com.apple.Music" else { return }
+        switch event {
+        case .launched, .activated:
+            scheduleProbeBurst()
+        case .terminated:
+            cancelProbeBurst()
+            refresh()
+        }
+    }
+
+    private func handleSystemSleep() {
+        isSleeping = true
+        pollTimer?.invalidate()
+        pollTimer = nil
+        cancelProbeBurst()
+        cancelQueueArtwork()
+    }
+
+    private func handleSystemWake() {
+        isSleeping = false
+        scheduleProbeBurst()
     }
 
     /// Up Next: the tracks immediately after the current one. Bounded reads
@@ -167,7 +358,7 @@ final class MusicAppMonitor: ObservableObject {
     /// (NSAppleScript is main-thread-only); the bounded cost makes that
     /// acceptable on a track change.
     private func fetchUpNext() {
-        let signature = lastSignature
+        let signature = lastTrackSignature
         let source = """
         tell application "Music"
           try
@@ -201,7 +392,7 @@ final class MusicAppMonitor: ObservableObject {
         end tell
         """
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.lastSignature == signature else { return }
+            guard let self, self.lastTrackSignature == signature else { return }
             guard let script = NSAppleScript(source: source) else { return }
             var error: NSDictionary?
             let result = script.executeAndReturnError(&error)
@@ -227,7 +418,87 @@ final class MusicAppMonitor: ObservableObject {
             }
             NSLog("[Halo] music: up-next %d tracks (playlist %@)", items.count, playlistID ?? "-")
             self.onQueue?(items)
+            if let playlistID {
+                self.fetchQueueArtwork(items: items, playlistID: playlistID, signature: signature)
+            }
         }
+    }
+
+    /// Playlist rows do not expose a CDN artwork URL through Music's scripting
+    /// dictionary. Deliver the titles immediately, then fetch each embedded
+    /// artwork payload separately so the queue never delays the card.
+    private func fetchQueueArtwork(items: [UpNextItem], playlistID: String, signature: String?) {
+        cancelQueueArtwork()
+        let generation = queueArtworkGeneration
+        for (offset, item) in items.enumerated() {
+            guard let trackIndex = item.trackIndex else { continue }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self,
+                      self.queueArtworkGeneration == generation,
+                      self.lastTrackSignature == signature,
+                      let data = self.fetchQueueArtwork(for: playlistID, trackIndex: trackIndex),
+                      !data.isEmpty,
+                      NSImage(data: data) != nil else { return }
+                self.applyQueueArtwork(
+                    data,
+                    playlistID: playlistID,
+                    trackIndex: trackIndex,
+                    signature: signature,
+                    generation: generation
+                )
+            }
+            queueArtworkWorkItems.append(work)
+            // Let SwiftUI render the text/placeholder row before the first
+            // synchronous AppleScript artwork read reaches the main thread.
+            let delay = 0.05 + (Double(offset) * 0.05)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    }
+
+    private func fetchQueueArtwork(for playlistID: String, trackIndex: Int) -> Data? {
+        let escapedID = playlistID
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "Music"
+          try
+            return data of artwork 1 of track \(trackIndex) of (first playlist whose persistent ID is "\(escapedID)")
+          on error
+            return ""
+          end try
+        end tell
+        """
+        guard let script = NSAppleScript(source: source) else { return nil }
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        guard error == nil, result.descriptorType != typeNull else { return nil }
+        let data = result.data
+        return data.isEmpty ? nil : data
+    }
+
+    private func applyQueueArtwork(
+        _ data: Data,
+        playlistID: String,
+        trackIndex: Int,
+        signature: String?,
+        generation: Int
+    ) {
+        guard queueArtworkGeneration == generation,
+              lastTrackSignature == signature,
+              var cur = current,
+              let index = cur.upNext.firstIndex(where: {
+                  $0.playlistID == playlistID && $0.trackIndex == trackIndex
+              }) else { return }
+        guard cur.upNext[index].artData != data else { return }
+        cur.upNext[index].artData = data
+        current = cur
+        onQueue?(cur.upNext)
+    }
+
+    private func cancelQueueArtwork() {
+        queueArtworkGeneration &+= 1
+        queueArtworkWorkItems.forEach { $0.cancel() }
+        queueArtworkWorkItems.removeAll()
     }
 
     /// Pure decode of the up-next payload: header record is the playlist
@@ -285,15 +556,24 @@ final class MusicAppMonitor: ObservableObject {
     }
 
     func playPause() {
-        if Self.isMusicRunning { command("playpause") }
+        if Self.isMusicRunning {
+            command("playpause")
+            scheduleProbeBurst()
+        }
         else { MediaRemote.sendCommand(.togglePlayPause) }
     }
     func next() {
-        if Self.isMusicRunning { command("next track") }
+        if Self.isMusicRunning {
+            command("next track")
+            scheduleProbeBurst()
+        }
         else { MediaRemote.sendCommand(.nextTrack) }
     }
     func previous() {
-        if Self.isMusicRunning { command("previous track") }
+        if Self.isMusicRunning {
+            command("previous track")
+            scheduleProbeBurst()
+        }
         else { MediaRemote.sendCommand(.previousTrack) }
     }
 
@@ -308,5 +588,6 @@ final class MusicAppMonitor: ObservableObject {
         if let error { NSLog("[Halo] music: seek error: %@", error) }
         // Refresh immediately so the halo reflects the jump.
         refresh()
+        scheduleProbeBurst(delays: [0.15, 0.50])
     }
 }

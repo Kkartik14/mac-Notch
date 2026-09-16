@@ -90,6 +90,30 @@ final class HaloCenterTests: XCTestCase {
         let zero = NowPlayingActivity(title: "T", artist: "A", isPlaying: false)
         XCTAssertEqual(zero.progress, 0)
     }
+
+    func testPauseProgressUpdateStopsPlaybackState() {
+        let c = HaloCenter()
+        c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true,
+                                                  elapsed: 60, duration: 240)),
+                  autoDismissAfter: nil, expand: false)
+        c.updateNowPlayingProgress(elapsed: 61, duration: 240, isPlaying: false)
+        guard case .nowPlaying(let n) = c.activities.first else {
+            return XCTFail("expected the nowPlaying activity")
+        }
+        XCTAssertFalse(n.isPlaying, "pause state must reach the collapsed playback indicator")
+    }
+}
+
+// MARK: - Playback indicator regression
+
+final class SpectrumBarsTests: XCTestCase {
+    func testPausedPlaybackUsesStillIndicator() {
+        XCTAssertEqual(SpectrumBars.mode(for: false), .still)
+    }
+
+    func testPlayingPlaybackUsesAnimatedIndicator() {
+        XCTAssertEqual(SpectrumBars.mode(for: true), .animated)
+    }
 }
 
 // MARK: - Positioning: the anti-slide contract

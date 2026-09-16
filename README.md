@@ -95,7 +95,7 @@ The collapsed pill can be clicked to open the top activity. Hover-open requires 
 
 ## Music and recently played behavior
 
-Music is read through AppleScript because direct MediaRemote reads are unreliable for Apple Music on recent macOS versions. On a track change Halo reads the title, artist, album, player state, position, duration, and artwork. It then tries to resolve the next three tracks:
+Music is read through AppleScript because direct MediaRemote reads are unreliable for Apple Music on recent macOS versions. On a track change Halo reads the title, artist, album, player state, position, duration, and artwork. Live status uses an adaptive poll: once per second while playing, every three seconds while paused, and a low-power fifteen-second backstop while Music is not running. User actions and Music lifecycle events use short follow-up probes so the card catches up quickly without making AppleScript calls continuously. It then tries to resolve the next three tracks:
 
 1. The current playlist, verified against the current track.
 2. Music's library playlist, also verified.
@@ -103,7 +103,7 @@ Music is read through AppleScript because direct MediaRemote reads are unreliabl
 
 For catalog contexts, Halo uses Music playback-session archives to recover the true queue order. It resolves store IDs through the public iTunes Lookup API, downloads small artwork thumbnails, and protects the visible card from stale session contexts.
 
-An Up Next playlist row is played directly through Music using its playlist persistent ID and track index. A catalog row cannot be addressed reliably by AppleScript, so it opens a music:// track URL instead. If no queue is available, the card shows a recently-played rail from Music's session archives. Tapping a recent track opens its music:// URL when one was recorded.
+An Up Next playlist row is played directly through Music using its playlist persistent ID and track index. Playlist rows appear immediately with their title and artist, then fill in artwork from Music's embedded track artwork when available. A catalog row cannot be addressed reliably by AppleScript, so it opens a music:// track URL instead. If no queue is available, the card shows a recently-played rail from Music's session archives. Tapping a recent track opens its music:// URL when one was recorded.
 
 The detailed source and precedence rules are in docs/architecture.md.
 

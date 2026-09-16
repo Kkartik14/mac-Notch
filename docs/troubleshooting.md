@@ -9,14 +9,14 @@
 
 ## Music or Spotify is not detected
 
-- Start the target app and wait for the three-second monitor poll.
+- Start the target app and wait for the monitor's launch probe; while playing, the normal status poll runs once per second.
 - Check **System Settings → Privacy & Security → Automation** and allow Halo to control the target app.
 - Use the halo's right-click **Now Playing** action to force a refresh.
 - Music and Spotify are separate sources. If both are open, transport commands are routed toward the player that is currently playing.
 
 ## Play/pause/next works but the card is stale
 
-The monitors update the UI through different paths. AppleScript track snapshots poll every three seconds, while some MediaRemote callbacks can arrive asynchronously. Use **Now Playing** from the context menu to force all playback sources to refresh.
+The monitors update the UI through different paths. Music and Spotify use AppleScript, while some MediaRemote callbacks can arrive asynchronously. Music uses an adaptive poll plus short action/lifecycle probes. Use **Now Playing** from the context menu to force all playback sources to refresh.
 
 ## Up Next is empty
 
