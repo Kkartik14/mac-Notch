@@ -27,9 +27,16 @@ The main application is defined in [Sources/Halo/App.swift](../Sources/Halo/App.
 3. HaloWindowController.install creates a borderless, non-activating NSPanel.
 4. The panel is placed on the main screen and kept at a fixed 660×210 size.
 5. A right-click menu is attached to the host view.
-6. startMonitors connects callbacks and starts every monitor.
+6. AppDelegate applies persisted display settings and installs the explicit permission actions used by Settings.
+7. startMonitors connects callbacks and starts every monitor.
 
 The app intentionally has no NSStatusItem. The halo itself is the visible app surface.
+
+## Settings and permission state
+
+[HaloSettings](../Sources/Halo/HaloSettings.swift) owns typed display preferences. Each value is stored under a namespaced `UserDefaults` key and published to the app. AppDelegate observes the settings object, reconfigures CalendarMonitor's source filters/lookahead/item cap, and dismisses activities that the user hides. Views observe the same singleton, so artwork, music rails, calendar duration/location details, motion, and hover behavior update without relaunching.
+
+Launch-at-login is registered through `SMAppService`; its status is read from macOS each time rather than trusted from a cached boolean. TCC permission grants are never copied into Halo preferences. CalendarMonitor and WeatherMonitor use [`HaloPermissionRequestLedger`](../Sources/Halo/HaloSettings.swift) only to remember that an automatic request was already attempted, while EventKit/Core Location status remains authoritative. Settings can make an explicit request while a capability is undecided or open the matching System Settings privacy pane after a denial.
 
 ## Activity state
 
@@ -133,7 +140,7 @@ If no queue is available, the UI uses the recent-track list. Queue rows with pla
 
 ### Calendar and Reminders
 
-[CalendarMonitor](../Sources/Halo/CalendarMonitor.swift) owns one `EKEventStore` and keeps Calendar events and incomplete Reminders separate from the rest of the UI as value types. It requests Calendar and Reminders access independently, so granting one does not require the other. Events are fetched from the beginning of today through the next seven days; reminders with due dates are fetched asynchronously and merged into one sorted list capped at 25 items, so overdue incomplete reminders remain visible until completion. An `EKEventStoreChanged` observer, a one-minute timer, and system wake/clock/locale observers cover edits, sleep/wake, and ordinary clock changes. The monitor also schedules a one-shot timer for the next future timed event, then compares the previous and current value snapshots to emit exactly one start transition. This avoids a high-frequency poller and avoids alerting for an event first seen after the app launches while it is already in progress.
+[CalendarMonitor](../Sources/Halo/CalendarMonitor.swift) owns one `EKEventStore` and keeps Calendar events and incomplete Reminders separate from the rest of the UI as value types. It requests Calendar and Reminders access independently, so granting one does not require the other. Events are fetched from the beginning of today through the configured lookahead (seven days by default); reminders with due dates are fetched asynchronously and merged into one sorted list capped at the configured item limit (25 by default), so overdue incomplete reminders remain visible until completion. An `EKEventStoreChanged` observer, a one-minute timer, and system wake/clock/locale observers cover edits, sleep/wake, and ordinary clock changes. The monitor also schedules a one-shot timer for the next future timed event, then compares the previous and current value snapshots to emit exactly one start transition. This avoids a high-frequency poller and avoids alerting for an event first seen after the app launches while it is already in progress.
 
 The expanded Calendar card gives the next item a fixed detail column and places the remaining returned items in a bounded, vertically scrollable Up Next column. All vertical rails use the shared [`HaloScrollView`](../Sources/Halo/HaloScrollView.swift), which owns the `ScrollView`, lazy stack, spacing, viewport limit, and indicator policy; [`HaloScrollMetrics`](../Sources/Halo/HaloScrollView.swift) keeps fixed-row sizing and scroll-threshold calculations pure and testable. Clicking an event or reminder title/time builds the owning app's native item URL (`ical://ekevent/...` or `x-apple-reminderkit://REMCDReminder/...`) and falls back to opening the app if macOS rejects the deep link. Event rows show start/end ranges, location controls open `maps://` searches in Apple Maps, and HTTP(S) EventKit URLs appear as optional meeting-link actions. The completion button remains a separate reminder-only action. Relative time is rendered through a SwiftUI `TimelineView`, so the countdown changes without rewriting the EventKit activity. A start transition expands the card once for four seconds and then leaves the live calendar pill in place; it does not create an event or schedule a duplicate system notification. Reminder rows expose a completion button; `completeReminder` resolves the EventKit identifier, saves `isCompleted = true`, and refreshes the activity. Missing permissions, malformed items, and reminders without due dates are ignored quietly.
 

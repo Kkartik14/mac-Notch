@@ -38,7 +38,7 @@ To review access:
 2. Go to **Privacy & Security → Calendars** or **Reminders**.
 3. Allow Halo to access the source you want to use.
 
-If access is denied, the corresponding monitor remains silent. Calendar access does not imply Reminders access, and vice versa.
+If access is denied, the corresponding monitor remains silent. Calendar access does not imply Reminders access, and vice versa. Automatic requests are made only for enabled sources and are guarded by the persisted request ledger in [HaloSettings.swift](../Sources/Halo/HaloSettings.swift), so an unanswered or denied request is not retried on every launch. The Permissions tab can make an intentional retry while macOS still reports `notDetermined`, or open System Settings after a denial.
 
 ## Location
 
@@ -56,7 +56,7 @@ Full Disk Access is needed on the tested macOS setup for these paths:
 ~/Library/Group Containers/group.com.apple.usernoted/db2/db
 ~~~
 
-Halo does not request or open the System Settings pane automatically. It tests whether the files/database are readable and logs a single diagnostic message, then degrades quietly.
+Halo does not request or open the System Settings pane automatically. The Permissions tab provides a user-initiated link to the Full Disk Access pane. Halo tests whether the files/database are readable and logs a single diagnostic message, then degrades quietly.
 
 Music playback-session archives are read separately from:
 
@@ -74,7 +74,7 @@ The current source makes requests to:
 - itunes.apple.com for Music queue metadata.
 - Artwork URLs supplied by Spotify or Apple Music CDN data.
 
-There is no Halo backend, analytics service, account system, or persistent application database. Track titles and playback state are processed locally; Music store IDs are sent to the iTunes Lookup endpoint only when the session queue needs display metadata.
+There is no Halo backend, analytics service, account system, or persistent activity database. Typed display preferences and the automatic permission-request ledger are stored in macOS `UserDefaults`; track titles and playback state are otherwise processed locally. Music store IDs are sent to the iTunes Lookup endpoint only when the session queue needs display metadata.
 
 ## Changes to permission behavior
 
@@ -82,5 +82,6 @@ When adding a new protected data source:
 
 - Add the smallest required usage-description key to Info.plist.
 - Detect readability at runtime instead of assuming the permission exists.
+- Request automatically only on first use, and persist a request-attempt marker so launch does not repeatedly interrupt the user.
 - Keep the monitor silent or use a safe fallback when access is missing.
 - Document the exact path, destination, and user-facing behavior here.

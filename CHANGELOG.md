@@ -2,7 +2,7 @@
 
 This file records user-visible changes. The project is currently in active development and does not yet follow a formal release cadence.
 
-## Current development snapshot — 2026-09-11
+## Current development snapshot — 2026-09-16
 
 - Added Apple Music and Spotify Now Playing adapters with playback controls and seeking.
 - Added Music playlist Up Next handling with direct playlist-row playback.
@@ -15,13 +15,14 @@ This file records user-visible changes. The project is currently in active devel
 - Redesigned the expanded Calendar card with a fixed next-item panel and scrollable Up Next agenda.
 - Raised the Calendar agenda cap to 25 items and added shared row actions plus wake/clock-change recovery.
 - Added exact Calendar/Reminders item opening, event start/end ranges, Apple Maps location actions, and optional meeting links.
+- Added a persistent, app-like Settings window for startup, interaction, activity visibility, music rails, calendar presentation, motion, and permission status.
+- Added a macOS-aware permission request ledger so automatic EventKit and location prompts happen once while intentional retries remain available from Settings.
 - Added activity priority, collapse, dismissal, and progress interpolation behavior.
 - Added parser, state, positioning, and host-safety tests.
 - Added tested release archive creation with checksum output and optional Developer ID signing/notarization hooks.
 
 ## Planned / not yet complete
 
-- Persistent user settings.
 - Manual Focus-mode selection.
 - MusicKit-based direct replay for catalog recent tracks.
 - UI automation and snapshot coverage.

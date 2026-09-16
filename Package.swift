@@ -24,7 +24,8 @@ let package = Package(
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreFoundation"),
                 .linkedFramework("CoreLocation"),
-                .linkedFramework("EventKit")
+                .linkedFramework("EventKit"),
+                .linkedFramework("ServiceManagement")
             ]
         ),
         .testTarget(

@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notificationMonitor = NotificationMonitor()
     private let calendarMonitor = CalendarMonitor()
     private let historyMonitor = PlaybackHistoryMonitor()
+    private let settingsWindowController = HaloSettingsWindowController()
+    private let settings = HaloSettings.shared
+    private var settingsObservation: AnyCancellable?
     private var wasPluggedIn = false
 
     /// Transport routing: the player that is currently playing owns the
@@ -86,6 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// After one source goes quiet: keep whichever source still has a
     /// playing track (quietly), else drop the card.
     private func resolveNowPlayingAfterClear() {
+        guard settings.showNowPlaying else {
+            haloController.center.dismiss("nowPlaying")
+            return
+        }
         if spotifyPlaying, let cur = spotifyMonitor.current {
             haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
         } else if musicPlaying, let cur = musicMonitor.current {
@@ -157,11 +164,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             quit: { NSApplication.shared.terminate(nil) }
         )
         haloController.install(contextMenu: makeContextMenu())
+        observeSettings()
+        HaloPermissionActions.shared.requestCalendarEventsAccess = { [weak self] in
+            self?.calendarMonitor.requestAccess(for: .event)
+        }
+        HaloPermissionActions.shared.requestRemindersAccess = { [weak self] in
+            self?.calendarMonitor.requestAccess(for: .reminder)
+        }
+        HaloPermissionActions.shared.requestLocationAccess = { [weak self] in
+            self?.weatherMonitor.requestLocationAccess()
+        }
+        applySettings()
         startMonitors()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    private func observeSettings() {
+        settingsObservation = settings.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in
+                // @Published emits before the property's didSet persists the
+                // new value. Deferring one turn lets every monitor see the
+                // committed preference and coalesces rapid toggle changes.
+                DispatchQueue.main.async {
+                    self?.applySettings()
+                }
+            }
+    }
+
+    private func applySettings() {
+        calendarMonitor.configure(
+            includeEvents: settings.showCalendarEvents,
+            includeReminders: settings.showReminders,
+            lookaheadDays: settings.calendarLookaheadDays,
+            maximumItems: settings.calendarItemLimit
+        )
+
+        if !settings.showNowPlaying { haloController.center.dismiss("nowPlaying") }
+        if !settings.showBattery { haloController.center.dismiss("charging") }
+        if !settings.showNotifications { haloController.center.dismiss("notification") }
+        if !settings.showWeather { haloController.center.dismiss("weather") }
+        if !settings.showFocus { haloController.center.dismiss("focus") }
+        if !settings.showCalendarEvents && !settings.showReminders {
+            haloController.center.dismiss("calendar")
+        }
     }
 
     private func startMonitors() {
@@ -191,8 +240,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // until dismissed. No auto-collapse: collapsing on its own is what
         // forced the expand/dismiss tap loop.
         nowPlayingMonitor.onUpdate = { [weak self] activity, _ in
-            guard !MusicAppMonitor.isMusicRunning else { return }
-            self?.haloController.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
+            guard let self, self.settings.showNowPlaying, !MusicAppMonitor.isMusicRunning else { return }
+            self.haloController.show(
+                .nowPlaying(activity),
+                autoDismissAfter: nil,
+                expand: self.settings.automaticallyExpandActivities,
+                collapseAfter: 3
+            )
         }
         nowPlayingMonitor.onClear = { [weak self] in
             guard !MusicAppMonitor.isMusicRunning else { return }
@@ -202,7 +256,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Apple Music via scripting — the reliable source on recent macOS.
         musicMonitor.onUpdate = { [weak self] activity, _ in
-            self?.haloController.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
+            guard let self, self.settings.showNowPlaying else { return }
+            self.haloController.show(
+                .nowPlaying(activity),
+                autoDismissAfter: nil,
+                expand: self.settings.automaticallyExpandActivities,
+                collapseAfter: 3
+            )
         }
         musicMonitor.onClear = { [weak self] in
             self?.resolveNowPlayingAfterClear()
@@ -217,7 +277,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Spotify via scripting — same treatment. Playing source wins the card.
         spotifyMonitor.onUpdate = { [weak self] activity, _ in
-            self?.haloController.show(.nowPlaying(activity), autoDismissAfter: nil, expand: true, collapseAfter: 3)
+            guard let self, self.settings.showNowPlaying else { return }
+            self.haloController.show(
+                .nowPlaying(activity),
+                autoDismissAfter: nil,
+                expand: self.settings.automaticallyExpandActivities,
+                collapseAfter: 3
+            )
         }
         spotifyMonitor.onClear = { [weak self] in
             self?.resolveNowPlayingAfterClear()
@@ -235,6 +301,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // plugged update quietly in rank position.
         batteryMonitor.start { [weak self] charge in
             guard let self else { return }
+            guard self.settings.showBattery else {
+                self.wasPluggedIn = charge.pluggedIn
+                self.haloController.center.dismiss("charging")
+                return
+            }
             self.haloController.center.updateBatteryLevel(charge.level)
             if charge.pluggedIn {
                 let isNewPlug = !self.wasPluggedIn
@@ -246,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         timeRemainingText: BatteryMonitor.etaText(minutes: charge.minutesRemaining)
                     )),
                     autoDismissAfter: nil,
-                    expand: isNewPlug,
+                    expand: isNewPlug && self.settings.automaticallyExpandActivities,
                     collapseAfter: isNewPlug ? 2 : nil
                 )
                 if isNewPlug {
@@ -266,17 +337,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and a one-minute clock refresh. Passive updates never expand the UI.
         calendarMonitor.start(
             onUpdate: { [weak self] activity in
-                self?.haloController.show(.calendar(activity), autoDismissAfter: nil, expand: false)
+                guard let self,
+                      self.settings.showCalendarEvents || self.settings.showReminders
+                else { return }
+                self.haloController.show(.calendar(activity), autoDismissAfter: nil, expand: false)
             },
             onClear: { [weak self] in
                 self?.haloController.center.dismiss("calendar")
             },
             onEventStart: { [weak self] activity, event in
+                guard let self,
+                      self.settings.calendarStartAlerts,
+                      self.settings.showCalendarEvents
+                else { return }
                 NSLog("[Halo] calendar: event started: %@", event.title)
-                self?.haloController.show(
+                self.haloController.show(
                     .calendar(activity),
                     autoDismissAfter: nil,
-                    expand: true,
+                    expand: self.settings.automaticallyExpandActivities,
                     collapseAfter: CalendarMonitor.startAlertDuration
                 )
             }
@@ -284,14 +362,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Weather — quiet pill, refreshes every 10 min. Never force-expands.
         weatherMonitor.start { [weak self] activity in
-            self?.haloController.show(.weather(activity), autoDismissAfter: nil, expand: false)
+            guard let self, self.settings.showWeather else { return }
+            self.haloController.show(.weather(activity), autoDismissAfter: nil, expand: false)
         }
 
         // Focus — live system mode via disk adapter (silent without FDA).
         // Pops once on activation, settles; turning it off clears the card.
         focusMonitor.onUpdate = { [weak self] state in
-            self?.haloController.show(.focus(FocusActivity(mode: state.name, symbol: state.symbol)),
-                              autoDismissAfter: nil, expand: true, collapseAfter: 6)
+            guard let self, self.settings.showFocus else { return }
+            self.haloController.show(
+                .focus(FocusActivity(mode: state.name, symbol: state.symbol)),
+                autoDismissAfter: nil,
+                expand: self.settings.automaticallyExpandActivities,
+                collapseAfter: 6
+            )
         }
         focusMonitor.onClear = { [weak self] in
             self?.haloController.center.dismiss("focus")
@@ -314,6 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Quiet 3s pill only — never pops the card.
         notificationMonitor.onNew = { [weak self] note in
             guard let self else { return }
+            guard self.settings.showNotifications else { return }
             let sender = note.title.isEmpty ? note.subtitle : note.title
             let body = note.subtitle.isEmpty || note.subtitle == sender ? note.body : "\(note.subtitle)\n\(note.body)"
             self.haloController.show(.notification(NotificationActivity(
@@ -439,6 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Expand the real system Now Playing state (Music/Spotify/…). If nothing
     /// is playing there is nothing to show — no fake track.
     @objc private func showNowPlaying() {
+        guard settings.showNowPlaying else { return }
         nowPlayingMonitor.refresh()
         musicMonitor.refresh()
         spotifyMonitor.refresh()
@@ -457,6 +543,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Show the live battery state from IOKit — plugged in or on battery.
     @objc private func showCharging() {
+        guard settings.showBattery else { return }
         batteryMonitor.refresh() // synchronous: `current` is fresh on return
         guard let cur = batteryMonitor.current else { return }
         haloController.show(.charging(ChargingActivity(
@@ -467,11 +554,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showWeather() {
+        guard settings.showWeather else { return }
         guard let cur = weatherMonitor.current else { return }
         haloController.show(.weather(cur), autoDismissAfter: nil, expand: true)
     }
 
     @objc private func showFocus() {
+        guard settings.showFocus else { return }
         if let live = focusMonitor.current {
             haloController.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: true)
         } else {
@@ -480,6 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showCalendar() {
+        guard settings.showCalendarEvents || settings.showReminders else { return }
         calendarMonitor.refresh()
         guard let current = calendarMonitor.current else { return }
         haloController.show(.calendar(current), autoDismissAfter: nil, expand: true)
@@ -546,6 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func previewPillCalendar() { previewPill("calendar") }
 
     @objc private func showNotification() {
+        guard settings.showNotifications else { return }
         haloController.show(.notification(NotificationActivity(
             appName: "Messages",
             sender: "Henrik",
@@ -563,9 +654,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        if #available(macOS 14, *) {
-            NSApp.activate()
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        }
+        settingsWindowController.show()
     }
 }
