@@ -32,6 +32,39 @@ final class HaloCenterTests: XCTestCase {
         XCTAssertEqual(c.activities.count, 1, "activity must survive the settle")
     }
 
+    func testAdminOverrideSurvivesNormalCollapseAndKeepsOpenCodeSelected() {
+        let c = HaloCenter()
+        c.present(.openCode(OpenCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            pendingPermission: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .expand(.user))
+
+        XCTAssertEqual(c.expandedId, "openCode")
+        XCTAssertEqual(c.manualOverrideID, "openCode")
+        c.collapse("openCode")
+        XCTAssertNil(c.expandedId, "pointer exit must minimize the expanded card")
+        XCTAssertEqual(c.manualOverrideID, "openCode")
+
+        c.present(.codex(CodexActivity(
+            chats: [], selectedChatID: nil, messages: [], connection: .connected,
+            pendingApproval: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        XCTAssertEqual(c.manualOverrideID, "openCode", "passive Codex updates must not replace the override")
+        XCTAssertFalse(c.canAutomaticallyExpand("codex"), "Codex must not take over the selected OpenCode pill")
+        XCTAssertTrue(c.canAutomaticallyExpand("openCode"))
+
+        c.toggleExpandTop()
+        XCTAssertEqual(c.expandedId, "openCode", "the selected pill must reopen OpenCode")
+        c.collapse("openCode")
+
+        c.present(.codex(CodexActivity(
+            chats: [], selectedChatID: nil, messages: [], connection: .connected,
+            pendingApproval: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .expand(.user))
+        XCTAssertEqual(c.manualOverrideID, "codex", "a new explicit choice must replace the old override")
+        XCTAssertEqual(c.expandedId, "codex")
+    }
+
     func testNewerCollapseScheduleSupersedesOlderCallback() {
         let c = HaloCenter()
         let first = NotificationActivity(appName: "A", sender: "B", body: "First", icon: "m")
@@ -65,13 +98,20 @@ final class HaloCenterTests: XCTestCase {
         c.present(.openCode(OpenCodeActivity(
             sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
             pendingPermission: nil, errorMessage: nil
-        )), autoDismissAfter: nil, expand: true)
+        )), autoDismissAfter: nil, intent: .expand(.user))
 
+        XCTAssertEqual(c.manualOverrideID, "openCode")
         XCTAssertFalse(c.canAutomaticallyExpand("codex"))
         XCTAssertTrue(c.canAutomaticallyExpand("openCode"))
 
+        c.toggleExpand("codex")
+        XCTAssertEqual(c.expandedId, "openCode", "a generic pill tap must not replace a manual selection")
+
         c.collapse("openCode")
-        XCTAssertTrue(c.canAutomaticallyExpand("codex"))
+        XCTAssertNil(c.expandedId)
+        XCTAssertEqual(c.manualOverrideID, "openCode")
+        XCTAssertFalse(c.canAutomaticallyExpand("codex"))
+        XCTAssertTrue(c.canAutomaticallyExpand("openCode"))
     }
 
     func testDismissFallsBackToPreviousActivity() {

@@ -51,7 +51,7 @@ HaloActivity has eight cases:
 - codex
 - openCode
 
-Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. HaloCenter.activities stores up to four activities. The array is ordered from lowest to highest priority; the last element is the activity shown in the collapsed pill.
+Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. HaloCenter.activities stores up to four activities. The array is ordered from lowest to highest priority; the last element is the collapsed-pill fallback when no explicit activity override is active.
 
 The current ranks are:
 
@@ -69,13 +69,21 @@ The current ranks are:
 Only one activity can be expanded at a time through expandedId. Presentation
 decisions go through [HaloPresentationPolicy](../Sources/Halo/HaloPresentation.swift):
 `.update` refreshes an activity without taking ownership of the expanded
-surface, `.expand(.user)` represents an explicit user action, `.expand(.hover)`
-is allowed only when the surface is already collapsed, and
-`.expand(.automatic)` may open an idle surface or refresh the activity that is
-already being viewed. `present` also schedules auto-dismiss and settle timers;
-generation tokens make an older delayed callback harmless after a newer update.
-`collapse` keeps the activity alive; `dismiss` removes it. Priority restoration
-never changes the expanded identifier just because the array was reordered.
+surface, `.expand(.user)` represents an explicit user action and creates a
+manual expanded-card override, `.expand(.pillTap)` is only allowed for a
+collapsed surface with no manual override, `.expand(.hover)` is allowed only
+when the surface is already collapsed, and `.expand(.automatic)` may open an
+idle surface or refresh the activity that is already being viewed without
+replacing a manual choice. `present` also schedules auto-dismiss and settle
+timers; generation tokens make an older delayed callback harmless after a
+newer update. An admin override owns the selected activity in both the
+expanded card and collapsed pill; it does not disable the normal
+pointer-exit lifecycle. A pointer exit minimizes the card but preserves the
+selected pill source. Another explicit user choice or removal of the selected
+activity releases or replaces the override. Ordinary `collapse` keeps the
+activity and selection alive while returning the surface to its pill. Priority
+restoration never changes the expanded identifier just because the array was
+reordered.
 
 HaloCenter also owns:
 
@@ -97,8 +105,11 @@ Input routing has two layers:
 
 Hover-open requires the pointer to have moved more than four points onto the
 visible shape, then dwell there for 300 ms. Pointer exit schedules a 300 ms
-collapse when the setting is enabled. The window is interactive only over the
-visible shape; transparent regions pass mouse input through.
+collapse when the setting is enabled. After a context-menu selection, the
+window briefly suppresses only the menu-dismissal handoff exit so the selected
+card can be reached; later pointer exits follow the same rule. The window is
+interactive only over the visible shape; transparent regions pass mouse input
+through.
 
 ## Monitor responsibilities
 

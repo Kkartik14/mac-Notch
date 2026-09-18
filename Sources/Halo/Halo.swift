@@ -127,6 +127,10 @@ struct WeatherActivity: Equatable {
 final class HaloCenter: ObservableObject {
     @Published var activities: [HaloActivity] = []
     @Published var expandedId: String?
+    /// Persistent explicit activity selection from a user menu/action. It
+    /// controls the collapsed pill and expanded card until another explicit
+    /// choice replaces it or the activity is removed.
+    @Published private(set) var manualOverrideID: String?
     /// Latest battery fraction for pills that show it (focus trailing).
     @Published var batteryLevel: Double?
     var deliver: ((HaloActivity) -> Void)?
@@ -250,12 +254,20 @@ final class HaloCenter: ObservableObject {
            !activities.contains(where: { $0.id == expandedId }) {
             self.expandedId = nil
         }
+        if let manualOverrideID,
+           !activities.contains(where: { $0.id == manualOverrideID }) {
+            self.manualOverrideID = nil
+        }
         if HaloPresentationPolicy.shouldExpand(
             intent: intent,
             currentExpandedID: expandedId,
-            targetID: activity.id
+            targetID: activity.id,
+            manualOverrideID: manualOverrideID
         ) {
             expandedId = activity.id
+            if case .expand(.user) = intent {
+                manualOverrideID = activity.id
+            }
         }
 
         invalidateAutoDismiss(for: activity.id)
@@ -281,12 +293,15 @@ final class HaloCenter: ObservableObject {
         present(
             activity,
             autoDismissAfter: seconds,
-            intent: expand ? .expand(.user) : .update,
+            // The old boolean API represents a generic expansion. Explicit
+            // menu/admin actions use the typed `.user` intent above.
+            intent: expand ? .expand(.pillTap) : .update,
             collapseAfter: collapse
         )
     }
 
-    /// Collapse an expanded card back to its pill, keeping the activity live.
+    /// Collapse an expanded card back to its pill, keeping both the activity
+    /// and any explicit selection override live.
     func collapse(_ id: String) {
         invalidateCollapse(for: id)
         if expandedId == id { expandedId = nil }
@@ -296,7 +311,12 @@ final class HaloCenter: ObservableObject {
         invalidateAutoDismiss(for: id)
         invalidateCollapse(for: id)
         activities.removeAll { $0.id == id }
+        if manualOverrideID == id { manualOverrideID = nil }
         if expandedId == id { expandedId = HaloPresentationPolicy.topActivityID(activities) }
+        if let manualOverrideID,
+           !activities.contains(where: { $0.id == manualOverrideID }) {
+            self.manualOverrideID = nil
+        }
         ensureTicking()
     }
 
@@ -309,6 +329,7 @@ final class HaloCenter: ObservableObject {
         collapseGenerations.removeAll()
         activities.removeAll()
         expandedId = nil
+        manualOverrideID = nil
         ensureTicking()
     }
 
@@ -316,7 +337,7 @@ final class HaloCenter: ObservableObject {
         if expandedId == id {
             collapse(id)
         } else {
-            _ = requestExpansion(for: id, source: .user)
+            _ = requestExpansion(for: id, source: .pillTap)
         }
     }
 
@@ -326,9 +347,11 @@ final class HaloCenter: ObservableObject {
         guard HaloPresentationPolicy.shouldExpand(
             intent: .expand(source),
             currentExpandedID: expandedId,
-            targetID: id
+            targetID: id,
+            manualOverrideID: manualOverrideID
         ) else { return false }
         expandedId = id
+        if source == .user { manualOverrideID = id }
         return true
     }
 
@@ -339,7 +362,8 @@ final class HaloCenter: ObservableObject {
         HaloPresentationPolicy.shouldExpand(
             intent: .expand(.automatic),
             currentExpandedID: expandedId,
-            targetID: id
+            targetID: id,
+            manualOverrideID: manualOverrideID
         )
     }
 
@@ -362,6 +386,10 @@ final class HaloCenter: ObservableObject {
             .map(\.element)
         // Restoring rank order must never replace the card the user is
         // currently viewing. Only fall back if that activity was removed.
+        if let manualOverrideID,
+           !activities.contains(where: { $0.id == manualOverrideID }) {
+            self.manualOverrideID = nil
+        }
         if let exp = expandedId,
            !activities.contains(where: { $0.id == exp }) {
             expandedId = HaloPresentationPolicy.topActivityID(activities)
@@ -369,8 +397,11 @@ final class HaloCenter: ObservableObject {
     }
 
     func toggleExpandTop() {
-        guard let topID = HaloPresentationPolicy.topActivityID(activities) else { return }
-        toggleExpand(topID)
+        guard let selectedID = HaloPresentationPolicy.selectedActivityID(
+            activities,
+            manualOverrideID: manualOverrideID
+        ) else { return }
+        toggleExpand(selectedID)
     }
 
     /// Cache the latest battery level for pills (focus trailing shows it).
@@ -504,6 +535,10 @@ final class HaloWindowController: NSObject {
     private var hoverWork: DispatchWorkItem?
     private var hoverTimer: Timer?
     private var hoverInside = false
+    /// Context-menu selection briefly owns the surface while AppKit dismisses
+    /// the menu. Without this handoff window, the cursor can be classified as
+    /// outside the newly expanded card before the user can reach it.
+    private var pointerExitSuppressedUntil: Date?
     private var recentMouse: [(time: Date, point: NSPoint)] = []
     private var pollCount = 0
     private var mouseMonitor: Any?
@@ -620,6 +655,7 @@ final class HaloWindowController: NSObject {
             hoverWork?.cancel()
             hoverWork = nil
             hoverInside = true
+            pointerExitSuppressedUntil = Date().addingTimeInterval(0.75)
         }
         center.present(activity, autoDismissAfter: seconds, intent: intent, collapseAfter: collapse)
         // A fresh card under a parked cursor must still take clicks.
@@ -657,6 +693,10 @@ final class HaloWindowController: NSObject {
         // Visible shape only — never transparent glass.
         let hit = visibleContentRect() ?? window.frame
         let inside = hit.contains(loc)
+        if let suppressedUntil = pointerExitSuppressedUntil {
+            guard now >= suppressedUntil else { return }
+            pointerExitSuppressedUntil = nil
+        }
         if inside != hoverInside {
             hoverInside = inside
             if inside { hoverEntered() } else { hoverExited() }
@@ -674,7 +714,10 @@ final class HaloWindowController: NSObject {
             let loc = NSEvent.mouseLocation
             let inHit = self.visibleContentRect().map { $0.contains(loc) } ?? false
             let moved = self.mouseMovedRecently(threshold: 4)
-            guard let top = HaloPresentationPolicy.topActivity(self.center.activities), inHit, moved else { return }
+            guard let top = HaloPresentationPolicy.selectedActivity(
+                self.center.activities,
+                manualOverrideID: self.center.manualOverrideID
+            ), inHit, moved else { return }
             guard self.center.requestExpansion(for: top.id, source: .hover) else { return }
             NSLog("[Halo] ui: hover-open %@", top.id)
             self.updateEventRouting()
@@ -927,10 +970,14 @@ struct HaloView: View {
 
     private var collapsedInlineView: some View {
         HStack(spacing: 8) {
-            // Both sides reflect the TOP activity (same one tap-to-expand
-            // opens). Mixing first/last shows e.g. music art with a
-            // battery % when several activities are live.
-            if let top = HaloPresentationPolicy.topActivity(center.activities) {
+            // Both sides reflect the selected activity (same one tap-to-expand
+            // opens), falling back to the highest-priority activity. Mixing
+            // first/last shows e.g. music art with a battery % when several
+            // activities are live.
+            if let top = HaloPresentationPolicy.selectedActivity(
+                center.activities,
+                manualOverrideID: center.manualOverrideID
+            ) {
                 inlineLeading(for: top)
                 Spacer(minLength: 0)
                 inlineTrailing(for: top)
@@ -940,8 +987,11 @@ struct HaloView: View {
         .frame(width: topSurfacePillWidth + 60, height: haloClosedHeight)
         .contentShape(Rectangle())
         .onTapGesture {
-            if let topID = HaloPresentationPolicy.topActivityID(center.activities) {
-                center.toggleExpand(topID)
+            if let selectedID = HaloPresentationPolicy.selectedActivityID(
+                center.activities,
+                manualOverrideID: center.manualOverrideID
+            ) {
+                center.toggleExpand(selectedID)
             }
         }
     }

@@ -87,7 +87,7 @@ The tests cover activity-stack behavior, fixed-window positioning, priority orde
 
 ## Runtime behavior
 
-The app starts with an idle Halo pill. Monitors then update a shared activity stack. The highest-priority activity is shown in the collapsed pill:
+The app starts with an idle Halo pill. Monitors then update a shared activity stack. The highest-priority activity is shown in the collapsed pill unless an explicit secondary-click selection is active:
 
 ~~~text
         Notification → Codex/OpenCode/Now Playing → Calendar/Focus → Charging → Weather
@@ -97,7 +97,13 @@ Activities are updated in place by identifier, and the stack is capped at four e
 
 Calendar and Reminders are read through EventKit. Halo keeps a configurable lookahead (seven days by default) and incomplete reminders, including overdue reminders until they are completed, with up to 25 items by default available to the expanded agenda. EventKit and system-change observers plus a one-minute refresh keep the activity current; a one-shot timer catches the next event start without high-frequency polling. Upcoming times become relative when useful, and a real event start gently expands the Calendar card once before settling back to its pill. The expanded card gives the next item visual weight and places the remaining returned items in a shared scrollable Up Next rail. Clicking an event or reminder title/time opens that exact item in Calendar or Reminders, event rows show their start/end range, and location controls open the place in Apple Maps. EventKit web links are exposed as optional meeting-link actions. Tapping the circle beside a reminder marks it complete in the Reminders database. Halo does not create events or send a second system notification.
 
-The collapsed pill can be clicked to open the top activity. Hover-open requires
+The collapsed pill can be clicked to open the top activity. An explicit
+activity choice from the secondary-click menu creates a persistent manual
+selection for both the expanded card and the collapsed pill; passive updates,
+hover, and priority changes cannot replace it. Pointer exit still minimizes
+the card normally, while the selected activity remains the pill's source.
+Another explicit activity choice or removal of the selected activity releases
+the override. Hover-open requires
 cursor movement onto the visible shape, a 300 ms dwell, and no other card
 already being expanded. Moving away schedules a 300 ms collapse when enabled.
 Transparent space around the pill/card passes input through to the application

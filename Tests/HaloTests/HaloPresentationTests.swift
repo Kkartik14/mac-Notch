@@ -14,6 +14,28 @@ final class HaloPresentationPolicyTests: XCTestCase {
             targetID: "openCode"
         ))
         XCTAssertTrue(HaloPresentationPolicy.shouldExpand(
+            intent: .expand(.pillTap),
+            currentExpandedID: nil,
+            targetID: "openCode"
+        ))
+        XCTAssertFalse(HaloPresentationPolicy.shouldExpand(
+            intent: .expand(.pillTap),
+            currentExpandedID: "codex",
+            targetID: "openCode"
+        ))
+        XCTAssertFalse(HaloPresentationPolicy.shouldExpand(
+            intent: .expand(.pillTap),
+            currentExpandedID: nil,
+            targetID: "openCode",
+            manualOverrideID: "codex"
+        ))
+        XCTAssertTrue(HaloPresentationPolicy.shouldExpand(
+            intent: .expand(.pillTap),
+            currentExpandedID: nil,
+            targetID: "codex",
+            manualOverrideID: "codex"
+        ))
+        XCTAssertTrue(HaloPresentationPolicy.shouldExpand(
             intent: .expand(.hover),
             currentExpandedID: nil,
             targetID: "openCode"
@@ -38,6 +60,18 @@ final class HaloPresentationPolicyTests: XCTestCase {
             currentExpandedID: "codex",
             targetID: "openCode"
         ))
+        XCTAssertFalse(HaloPresentationPolicy.shouldExpand(
+            intent: .expand(.automatic),
+            currentExpandedID: nil,
+            targetID: "openCode",
+            manualOverrideID: "codex"
+        ))
+        XCTAssertTrue(HaloPresentationPolicy.shouldExpand(
+            intent: .expand(.automatic),
+            currentExpandedID: nil,
+            targetID: "codex",
+            manualOverrideID: "codex"
+        ))
     }
 
     func testPointerExitOnlyCollapsesWhenEnabledAndExpanded() {
@@ -53,5 +87,31 @@ final class HaloPresentationPolicyTests: XCTestCase {
             expandedID: "openCode",
             collapseOnMouseLeave: false
         ))
+    }
+
+    func testManualSelectionWinsCollapsedResolutionOverPriority() {
+        let openCode = HaloActivity.openCode(OpenCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            pendingPermission: nil, errorMessage: nil
+        ))
+        let codex = HaloActivity.codex(CodexActivity(
+            chats: [], selectedChatID: nil, messages: [], connection: .connected,
+            pendingApproval: nil, errorMessage: nil
+        ))
+        let activities = [openCode, codex]
+
+        XCTAssertEqual(
+            HaloPresentationPolicy.selectedActivityID(activities, manualOverrideID: "openCode"),
+            "openCode"
+        )
+        XCTAssertEqual(
+            HaloPresentationPolicy.selectedActivity(activities, manualOverrideID: nil)?.id,
+            "codex"
+        )
+        XCTAssertEqual(
+            HaloPresentationPolicy.selectedActivityID(activities, manualOverrideID: "missing"),
+            "codex",
+            "a stale override must fall back to priority"
+        )
     }
 }

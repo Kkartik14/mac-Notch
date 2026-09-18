@@ -56,7 +56,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 - Calendar/Reminders filtering, ordering, in-progress event retention, overdue-reminder persistence, relative time labels, start-boundary detection, rail limits, exact native item URLs, Maps links, web-link filtering, and event duration ranges.
 - UserDefaults-backed preference restoration and persistence of the automatic permission-request ledger.
 - Shared scroll-rail geometry: row spacing, viewport clamping, empty input, invalid dimensions, and the overflow threshold.
-- Shared presentation policy: explicit user expansion, hover ownership, automatic alert ownership, pointer-exit collapse, and protection against passive updates hijacking the expanded card.
+- Shared presentation policy: explicit user expansion/manual override ownership across collapse, selected-pill routing, normal pointer-exit collapse, pill-tap ownership, hover ownership, automatic alert ownership, and protection against passive updates hijacking the expanded card.
 - Codex app-server parsing and display contracts: approval/waiting state, compact labels, thread metadata, optional WORK activity filtering and status details, private-reasoning omission, and Codex activity priority.
 - OpenCode HTTP/SSE parsing and display contracts: session metadata and ordering, millisecond timestamps, message/tool parsing, private-reasoning omission, direct/global SSE payloads, streamed output tokens, permission request bodies, and optional WORK activity filtering.
 - Music scripting queue payload parsing.
