@@ -14,6 +14,7 @@ Halo is an accessory app with an unsandboxed entitlement configuration. That avo
 | Calendar events | Calendar full access | CalendarMonitor | Calendar events are unavailable; Reminders can still work if separately allowed. |
 | Reminders and completion | Reminders full access | CalendarMonitor | Reminders are unavailable and the completion control is not shown. |
 | Codex chats and turns | Codex CLI installation and its own authentication/configuration | CodexMonitor | The Codex activity reports unavailable; Halo does not read or store Codex credentials. |
+| OpenCode sessions and turns | OpenCode CLI installation and its own provider authentication/configuration | OpenCodeMonitor | The OpenCode activity reports unavailable; Halo does not read or store OpenCode credentials. |
 
 ## Automation
 
@@ -78,6 +79,8 @@ The current source makes requests to:
 There is no Halo backend, analytics service, account system, or persistent activity database. Typed display preferences and the automatic permission-request ledger are stored in macOS `UserDefaults`; track titles and playback state are otherwise processed locally. Music store IDs are sent to the iTunes Lookup endpoint only when the session queue needs display metadata.
 
 Codex traffic is owned by the local Codex CLI launched as `codex app-server`. Halo sends protocol requests to that local process; the CLI applies the user's existing Codex authentication, model, sandbox, approval, and network configuration. Halo does not inspect API keys or proxy Codex requests through a Halo service.
+
+OpenCode traffic is owned by the local `opencode serve --hostname 127.0.0.1 --port 0` process launched by Halo on a free loopback port. Halo supplies an ephemeral HTTP password to that child and uses it only for its own loopback requests. Halo sends v2 session requests and prompts to that local server and listens to its `/api/event` SSE stream; OpenCode still applies the user's existing provider authentication, model, sandbox, and permission configuration. Halo does not inspect API keys or proxy OpenCode requests through a Halo service.
 
 ## Changes to permission behavior
 

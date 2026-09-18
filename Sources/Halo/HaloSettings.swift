@@ -61,6 +61,8 @@ final class HaloSettings: ObservableObject {
         static let showReminders = "Halo.settings.showReminders"
         static let showCodex = "Halo.settings.showCodex"
         static let showCodexWorkActivity = "Halo.settings.showCodexWorkActivity"
+        static let showOpenCode = "Halo.settings.showOpenCode"
+        static let showOpenCodeWorkActivity = "Halo.settings.showOpenCodeWorkActivity"
         static let showArtwork = "Halo.settings.showArtwork"
         static let showUpNext = "Halo.settings.showUpNext"
         static let showRecentlyPlayed = "Halo.settings.showRecentlyPlayed"
@@ -125,6 +127,14 @@ final class HaloSettings: ObservableObject {
         didSet { defaults.set(showCodexWorkActivity, forKey: Key.showCodexWorkActivity) }
     }
 
+    @Published var showOpenCode: Bool {
+        didSet { defaults.set(showOpenCode, forKey: Key.showOpenCode) }
+    }
+
+    @Published var showOpenCodeWorkActivity: Bool {
+        didSet { defaults.set(showOpenCodeWorkActivity, forKey: Key.showOpenCodeWorkActivity) }
+    }
+
     @Published var showArtwork: Bool {
         didSet { defaults.set(showArtwork, forKey: Key.showArtwork) }
     }
@@ -177,6 +187,8 @@ final class HaloSettings: ObservableObject {
         self.showReminders = Self.bool(Key.showReminders, defaults: defaults, fallback: true)
         self.showCodex = Self.bool(Key.showCodex, defaults: defaults, fallback: true)
         self.showCodexWorkActivity = Self.bool(Key.showCodexWorkActivity, defaults: defaults, fallback: false)
+        self.showOpenCode = Self.bool(Key.showOpenCode, defaults: defaults, fallback: true)
+        self.showOpenCodeWorkActivity = Self.bool(Key.showOpenCodeWorkActivity, defaults: defaults, fallback: false)
         self.showArtwork = Self.bool(Key.showArtwork, defaults: defaults, fallback: true)
         self.showUpNext = Self.bool(Key.showUpNext, defaults: defaults, fallback: true)
         self.showRecentlyPlayed = Self.bool(Key.showRecentlyPlayed, defaults: defaults, fallback: true)
@@ -223,6 +235,8 @@ final class HaloSettings: ObservableObject {
         showReminders = true
         showCodex = true
         showCodexWorkActivity = false
+        showOpenCode = true
+        showOpenCodeWorkActivity = false
         showArtwork = true
         showUpNext = true
         showRecentlyPlayed = true

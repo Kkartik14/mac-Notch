@@ -41,6 +41,7 @@ enum HaloActivity: Equatable, Identifiable {
     case weather(WeatherActivity)
     case calendar(CalendarActivity)
     case codex(CodexActivity)
+    case openCode(OpenCodeActivity)
 
     var id: String {
         switch self {
@@ -51,6 +52,7 @@ enum HaloActivity: Equatable, Identifiable {
         case .weather: return "weather"
         case .calendar: return "calendar"
         case .codex: return "codex"
+        case .openCode: return "openCode"
         }
     }
 }
@@ -138,6 +140,7 @@ final class HaloCenter: ObservableObject {
         case .focus: return 2
         case .calendar: return 2
         case .codex: return 3
+        case .openCode: return 3
         case .charging: return 1
         case .weather: return 0
         }
@@ -169,9 +172,19 @@ final class HaloCenter: ObservableObject {
     var onSendCodex: ((String) -> Void)?
     var onInterruptCodex: (() -> Void)?
     var onResolveCodexApproval: ((CodexApprovalDecision) -> Void)?
+    /// OpenCode developer activity callbacks. OpenCode uses its own local
+    /// HTTP/SSE transport and its own value types, kept separate from Codex.
+    var onSelectOpenCodeSession: ((String) -> Void)?
+    var onNewOpenCodeSession: (() -> Void)?
+    var onRefreshOpenCode: (() -> Void)?
+    var onSendOpenCode: ((String) -> Void)?
+    var onInterruptOpenCode: (() -> Void)?
+    var onResolveOpenCodePermission: ((OpenCodePermissionDecision) -> Void)?
 
     private var autoDismissWorkItems: [String: DispatchWorkItem] = [:]
     private var collapseWorkItems: [String: DispatchWorkItem] = [:]
+    private var autoDismissGenerations: [String: UInt64] = [:]
+    private var collapseGenerations: [String: UInt64] = [:]
     private var tickTimer: Timer?
 
     deinit {
@@ -203,11 +216,15 @@ final class HaloCenter: ObservableObject {
         }
     }
 
-    /// Present an activity. Passive monitor refreshes must pass `expand: false`
-    /// so they never hijack the halo; new user-visible events pass
-    /// `expand: true` with `collapseAfter` so the card opens, then settles
-    /// back to its pill while the activity stays live.
-    func present(_ activity: HaloActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
+    /// Update or present an activity through the shared expansion policy.
+    /// Ordinary monitor updates use `.update`; only an explicit intent may
+    /// change the expanded card.
+    func present(
+        _ activity: HaloActivity,
+        autoDismissAfter seconds: TimeInterval? = 8,
+        intent: HaloPresentationIntent = .update,
+        collapseAfter collapse: TimeInterval? = nil
+    ) {
         let idx: Int
         if let existing = activities.firstIndex(where: { $0.id == activity.id }) {
             activities[existing] = activity
@@ -217,7 +234,8 @@ final class HaloCenter: ObservableObject {
             let pos = activities.firstIndex { Self.rank(of: $0) > Self.rank(of: activity) } ?? activities.endIndex
             activities.insert(activity, at: pos)
             if activities.count > 4 { activities.removeFirst(activities.count - 4) }
-            idx = pos
+            guard let inserted = activities.firstIndex(where: { $0.id == activity.id }) else { return }
+            idx = inserted
         }
         // Fresh nowPlaying cards carry no history (independent source);
         // re-attach the cached recents so the fallback rail survives.
@@ -225,51 +243,104 @@ final class HaloCenter: ObservableObject {
             n.recent = latestRecent
             activities[idx] = .nowPlaying(n)
         }
-        if expand { expandedId = activity.id }
-        autoDismissWorkItems[activity.id]?.cancel()
-        autoDismissWorkItems.removeValue(forKey: activity.id)
+
+        // A capped activity can remove the card that used to be expanded.
+        // Clear that stale target before evaluating the new request.
+        if let expandedId,
+           !activities.contains(where: { $0.id == expandedId }) {
+            self.expandedId = nil
+        }
+        if HaloPresentationPolicy.shouldExpand(
+            intent: intent,
+            currentExpandedID: expandedId,
+            targetID: activity.id
+        ) {
+            expandedId = activity.id
+        }
+
+        invalidateAutoDismiss(for: activity.id)
         if let seconds {
             scheduleAutoDismiss(for: activity.id, after: seconds)
         }
-        collapseWorkItems[activity.id]?.cancel()
-        collapseWorkItems.removeValue(forKey: activity.id)
+        invalidateCollapse(for: activity.id)
         if let collapse {
-            let work = DispatchWorkItem { [weak self] in self?.collapse(activity.id) }
-            collapseWorkItems[activity.id] = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + collapse, execute: work)
+            scheduleCollapse(for: activity.id, after: collapse)
         }
         ensureTicking()
     }
 
+    /// Compatibility shim for focused model tests and older call sites. New
+    /// production code should pass a typed presentation intent instead of a
+    /// boolean that loses the reason for expansion.
+    func present(
+        _ activity: HaloActivity,
+        autoDismissAfter seconds: TimeInterval? = 8,
+        expand: Bool,
+        collapseAfter collapse: TimeInterval? = nil
+    ) {
+        present(
+            activity,
+            autoDismissAfter: seconds,
+            intent: expand ? .expand(.user) : .update,
+            collapseAfter: collapse
+        )
+    }
+
     /// Collapse an expanded card back to its pill, keeping the activity live.
     func collapse(_ id: String) {
-        collapseWorkItems[id]?.cancel()
-        collapseWorkItems.removeValue(forKey: id)
+        invalidateCollapse(for: id)
         if expandedId == id { expandedId = nil }
     }
 
     func dismiss(_ id: String) {
-        autoDismissWorkItems[id]?.cancel()
-        autoDismissWorkItems.removeValue(forKey: id)
-        collapseWorkItems[id]?.cancel()
-        collapseWorkItems.removeValue(forKey: id)
+        invalidateAutoDismiss(for: id)
+        invalidateCollapse(for: id)
         activities.removeAll { $0.id == id }
-        if expandedId == id { expandedId = activities.last?.id }
+        if expandedId == id { expandedId = HaloPresentationPolicy.topActivityID(activities) }
         ensureTicking()
     }
 
     func dismissAll() {
         autoDismissWorkItems.values.forEach { $0.cancel() }
         autoDismissWorkItems.removeAll()
+        autoDismissGenerations.removeAll()
         collapseWorkItems.values.forEach { $0.cancel() }
         collapseWorkItems.removeAll()
+        collapseGenerations.removeAll()
         activities.removeAll()
         expandedId = nil
         ensureTicking()
     }
 
     func toggleExpand(_ id: String) {
-        expandedId = (expandedId == id) ? nil : id
+        if expandedId == id {
+            collapse(id)
+        } else {
+            _ = requestExpansion(for: id, source: .user)
+        }
+    }
+
+    @discardableResult
+    func requestExpansion(for id: String, source: HaloExpansionSource) -> Bool {
+        guard activities.contains(where: { $0.id == id }) else { return false }
+        guard HaloPresentationPolicy.shouldExpand(
+            intent: .expand(source),
+            currentExpandedID: expandedId,
+            targetID: id
+        ) else { return false }
+        expandedId = id
+        return true
+    }
+
+    /// Automatic alerts may expand only when the surface is currently
+    /// collapsed, or when they belong to the card already on screen. A
+    /// background provider update must never replace a user's active view.
+    func canAutomaticallyExpand(_ id: String) -> Bool {
+        HaloPresentationPolicy.shouldExpand(
+            intent: .expand(.automatic),
+            currentExpandedID: expandedId,
+            targetID: id
+        )
     }
 
     /// Pin an activity to the top regardless of rank (plug-in override).
@@ -289,15 +360,17 @@ final class HaloCenter: ObservableObject {
                 return $0.offset < $1.offset
             }
             .map(\.element)
-        // If the expanded card is no longer on top, settle it to the top.
-        if let exp = expandedId, activities.last?.id != exp {
-            expandedId = activities.last?.id
+        // Restoring rank order must never replace the card the user is
+        // currently viewing. Only fall back if that activity was removed.
+        if let exp = expandedId,
+           !activities.contains(where: { $0.id == exp }) {
+            expandedId = HaloPresentationPolicy.topActivityID(activities)
         }
     }
 
     func toggleExpandTop() {
-        guard let top = activities.last else { return }
-        toggleExpand(top.id)
+        guard let topID = HaloPresentationPolicy.topActivityID(activities) else { return }
+        toggleExpand(topID)
     }
 
     /// Cache the latest battery level for pills (focus trailing shows it).
@@ -361,10 +434,41 @@ final class HaloCenter: ObservableObject {
         ensureTicking()
     }
 
-    private func scheduleAutoDismiss(for id: String, after seconds: TimeInterval) {
+    private func nextGeneration(for id: String, in generations: inout [String: UInt64]) -> UInt64 {
+        let next = (generations[id] ?? 0) &+ 1
+        generations[id] = next
+        return next
+    }
+
+    private func invalidateAutoDismiss(for id: String) {
         autoDismissWorkItems[id]?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.dismiss(id) }
+        autoDismissWorkItems.removeValue(forKey: id)
+        _ = nextGeneration(for: id, in: &autoDismissGenerations)
+    }
+
+    private func invalidateCollapse(for id: String) {
+        collapseWorkItems[id]?.cancel()
+        collapseWorkItems.removeValue(forKey: id)
+        _ = nextGeneration(for: id, in: &collapseGenerations)
+    }
+
+    private func scheduleAutoDismiss(for id: String, after seconds: TimeInterval) {
+        let generation = nextGeneration(for: id, in: &autoDismissGenerations)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.autoDismissGenerations[id] == generation else { return }
+            self.dismiss(id)
+        }
         autoDismissWorkItems[id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    private func scheduleCollapse(for id: String, after seconds: TimeInterval) {
+        let generation = nextGeneration(for: id, in: &collapseGenerations)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.collapseGenerations[id] == generation else { return }
+            self.collapse(id)
+        }
+        collapseWorkItems[id] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
@@ -398,7 +502,6 @@ final class HaloWindowController: NSObject {
     let center = HaloCenter()
     var actions = HaloActions()
     private var hoverWork: DispatchWorkItem?
-    private var hoverOpenedId: String?
     private var hoverTimer: Timer?
     private var hoverInside = false
     private var recentMouse: [(time: Date, point: NSPoint)] = []
@@ -504,8 +607,21 @@ final class HaloWindowController: NSObject {
         }
     }
 
-    func show(_ activity: HaloActivity, autoDismissAfter seconds: TimeInterval? = 8, expand: Bool = true, collapseAfter collapse: TimeInterval? = nil) {
-        center.present(activity, autoDismissAfter: seconds, expand: expand, collapseAfter: collapse)
+    func show(
+        _ activity: HaloActivity,
+        autoDismissAfter seconds: TimeInterval? = 8,
+        intent: HaloPresentationIntent = .update,
+        collapseAfter collapse: TimeInterval? = nil
+    ) {
+        if case .expand(.user) = intent {
+            // A context-menu action can change the visible geometry while the
+            // pointer is already outside it. Cancel stale work and force the
+            // next hover poll to re-evaluate the new surface.
+            hoverWork?.cancel()
+            hoverWork = nil
+            hoverInside = true
+        }
+        center.present(activity, autoDismissAfter: seconds, intent: intent, collapseAfter: collapse)
         // A fresh card under a parked cursor must still take clicks.
         updateEventRouting()
     }
@@ -558,12 +674,9 @@ final class HaloWindowController: NSObject {
             let loc = NSEvent.mouseLocation
             let inHit = self.visibleContentRect().map { $0.contains(loc) } ?? false
             let moved = self.mouseMovedRecently(threshold: 4)
-            guard self.center.expandedId == nil,
-                  let top = self.center.activities.last,
-                  inHit, moved else { return }
+            guard let top = HaloPresentationPolicy.topActivity(self.center.activities), inHit, moved else { return }
+            guard self.center.requestExpansion(for: top.id, source: .hover) else { return }
             NSLog("[Halo] ui: hover-open %@", top.id)
-            self.hoverOpenedId = top.id
-            self.center.expandedId = top.id
             self.updateEventRouting()
         }
         hoverWork = work
@@ -586,15 +699,14 @@ final class HaloWindowController: NSObject {
     private func hoverExited() {
         hoverWork?.cancel()
         hoverWork = nil
-        guard HaloSettings.shared.collapseOnMouseLeave else { return }
-        // Hover-away always settles the halo: whatever is expanded
-        // collapses shortly after the mouse leaves (re-enter cancels).
-        // Track-change cards additionally settle on their own 3s timer.
+        guard HaloPresentationPolicy.shouldCollapseOnPointerExit(
+            expandedID: center.expandedId,
+            collapseOnMouseLeave: HaloSettings.shared.collapseOnMouseLeave
+        ) else { return }
         guard let id = center.expandedId else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, HaloSettings.shared.collapseOnMouseLeave else { return }
             self.center.collapse(id)
-            self.hoverOpenedId = nil
             self.updateEventRouting()
         }
         hoverWork = work
@@ -650,6 +762,7 @@ struct HaloActions {
     var showFocus: () -> Void = {}
     var showCalendar: () -> Void = {}
     var showCodex: () -> Void = {}
+    var showOpenCode: () -> Void = {}
     var previewPillMusic: () -> Void = {}
     var previewPillWeather: () -> Void = {}
     var previewPillCharging: () -> Void = {}
@@ -745,6 +858,7 @@ struct HaloView: View {
             Button("Focus Card") { actions.showFocus() }
             Button("Calendar") { actions.showCalendar() }
             Button("Codex · Developer activity") { actions.showCodex() }
+            Button("OpenCode · Developer activity") { actions.showOpenCode() }
             Divider()
             Button("Pill · Music") { actions.previewPillMusic() }
             Button("Pill · Weather") { actions.previewPillWeather() }
@@ -816,7 +930,7 @@ struct HaloView: View {
             // Both sides reflect the TOP activity (same one tap-to-expand
             // opens). Mixing first/last shows e.g. music art with a
             // battery % when several activities are live.
-            if let top = center.activities.last {
+            if let top = HaloPresentationPolicy.topActivity(center.activities) {
                 inlineLeading(for: top)
                 Spacer(minLength: 0)
                 inlineTrailing(for: top)
@@ -826,7 +940,9 @@ struct HaloView: View {
         .frame(width: topSurfacePillWidth + 60, height: haloClosedHeight)
         .contentShape(Rectangle())
         .onTapGesture {
-            if let top = center.activities.last { center.toggleExpand(top.id) }
+            if let topID = HaloPresentationPolicy.topActivityID(center.activities) {
+                center.toggleExpand(topID)
+            }
         }
     }
 
@@ -874,6 +990,8 @@ struct HaloView: View {
             inlineDot(for: activity)
         case .codex:
             OpenAIMarkView(size: 20)
+        case .openCode:
+            OpenCodeMarkView(size: 20)
         default:
             inlineDot(for: activity)
         }
@@ -915,6 +1033,12 @@ struct HaloView: View {
                 inlineDot(for: activity)
             }
         case .codex(let c):
+            Text(c.compactLabel)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .frame(width: 30, alignment: .trailing)
+        case .openCode(let c):
             Text(c.compactLabel)
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(.white)
@@ -1056,6 +1180,16 @@ struct HaloView: View {
             onInterrupt: { [weak center] in center?.onInterruptCodex?() },
             onResolveApproval: { [weak center] decision in center?.onResolveCodexApproval?(decision) }
         )
+        case .openCode(let c): OpenCodeExpandedView(
+            activity: c,
+            showWorkActivity: settings.showOpenCodeWorkActivity,
+            onSelectSession: { [weak center] id in center?.onSelectOpenCodeSession?(id) },
+            onNewSession: { [weak center] in center?.onNewOpenCodeSession?() },
+            onRefresh: { [weak center] in center?.onRefreshOpenCode?() },
+            onSend: { [weak center] text in center?.onSendOpenCode?(text) },
+            onInterrupt: { [weak center] in center?.onInterruptOpenCode?() },
+            onResolvePermission: { [weak center] decision in center?.onResolveOpenCodePermission?(decision) }
+        )
         }
     }
 
@@ -1079,6 +1213,8 @@ struct HaloView: View {
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
         } else if case .codex = activity {
             OpenAIMarkView(size: size)
+        } else if case .openCode = activity {
+            OpenCodeMarkView(size: size)
         } else {
             let (name, color) = iconSpec(for: activity)
             ZStack {
@@ -1099,6 +1235,7 @@ struct HaloView: View {
         case .weather(let w): return (w.symbol, .blue)
         case .calendar: return ("calendar", .orange)
         case .codex: return ("terminal.fill", .gray)
+        case .openCode: return ("chevron.left.forwardslash.chevron.right", .gray)
         }
     }
 
@@ -1111,6 +1248,7 @@ struct HaloView: View {
         case .weather: return "Weather"
         case .calendar: return "Calendar"
         case .codex: return "Codex"
+        case .openCode: return "OpenCode"
         }
     }
 
@@ -1124,6 +1262,7 @@ struct HaloView: View {
         case .weather(let w): Text(w.condition).font(.system(size: size, weight: .semibold))
         case .calendar(let c): Text(c.nextItem?.title ?? "Calendar").font(.system(size: size, weight: .semibold))
         case .codex(let c): Text(c.selectedChat?.title ?? "Codex").font(.system(size: size, weight: .semibold))
+        case .openCode(let c): Text(c.selectedSession?.title ?? "OpenCode").font(.system(size: size, weight: .semibold))
         }
     }
 

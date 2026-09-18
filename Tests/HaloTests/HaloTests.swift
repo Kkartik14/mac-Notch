@@ -32,6 +32,21 @@ final class HaloCenterTests: XCTestCase {
         XCTAssertEqual(c.activities.count, 1, "activity must survive the settle")
     }
 
+    func testNewerCollapseScheduleSupersedesOlderCallback() {
+        let c = HaloCenter()
+        let first = NotificationActivity(appName: "A", sender: "B", body: "First", icon: "m")
+        let second = NotificationActivity(appName: "A", sender: "B", body: "Second", icon: "m")
+        c.present(.notification(first), autoDismissAfter: nil, expand: true, collapseAfter: 0.2)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        c.present(.notification(second), autoDismissAfter: nil, expand: true, collapseAfter: 0.6)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(c.expandedId, "notification", "an older delayed collapse must not win")
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.45))
+        XCTAssertNil(c.expandedId, "the newest collapse schedule should still settle the card")
+    }
+
     func testQuietMonitorUpdatesNeverHijack() {
         let c = HaloCenter()
         c.present(.weather(WeatherActivity(temperatureC: 15, condition: "Clear", symbol: "s")),
@@ -43,6 +58,20 @@ final class HaloCenterTests: XCTestCase {
                   autoDismissAfter: nil, expand: false)
         XCTAssertNil(c.expandedId)
         XCTAssertEqual(c.activities.count, 1, "same id must update in place, not duplicate")
+    }
+
+    func testAutomaticExpansionCannotReplaceAnActiveProvider() {
+        let c = HaloCenter()
+        c.present(.openCode(OpenCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            pendingPermission: nil, errorMessage: nil
+        )), autoDismissAfter: nil, expand: true)
+
+        XCTAssertFalse(c.canAutomaticallyExpand("codex"))
+        XCTAssertTrue(c.canAutomaticallyExpand("openCode"))
+
+        c.collapse("openCode")
+        XCTAssertTrue(c.canAutomaticallyExpand("codex"))
     }
 
     func testDismissFallsBackToPreviousActivity() {
@@ -236,6 +265,17 @@ final class PriorityTests: XCTestCase {
         XCTAssertEqual(c.activities.last?.id, "charging")
         c.applyPriorityOrder()
         XCTAssertEqual(c.activities.map(\.id), ["charging", "nowPlaying"])
+    }
+
+    func testPriorityRestoreKeepsTheCurrentlyExpandedCard() {
+        let c = HaloCenter()
+        c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: true)
+        c.present(.charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil)), autoDismissAfter: nil, expand: false)
+
+        c.moveToTop("charging")
+        c.applyPriorityOrder()
+
+        XCTAssertEqual(c.expandedId, "nowPlaying", "reordering must not replace the card being viewed")
     }
 }
 

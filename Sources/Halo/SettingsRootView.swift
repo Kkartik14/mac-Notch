@@ -362,6 +362,12 @@ struct SettingsRootView: View {
                         description: "Show Codex WORK actions and their secondary details. Approval prompts remain visible. Off by default.",
                         isOn: $settings.showCodexWorkActivity
                     )
+                    settingToggle("OpenCode developer activity", description: "Recent OpenCode sessions, live work, permissions, and a local composer.", isOn: $settings.showOpenCode)
+                    settingToggle(
+                        "OpenCode WORK activity",
+                        description: "Show OpenCode WORK actions and their secondary details. Permission prompts remain visible. Off by default.",
+                        isOn: $settings.showOpenCodeWorkActivity
+                    )
                 }
             }
         }

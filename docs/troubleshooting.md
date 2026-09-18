@@ -74,6 +74,15 @@ Weather refreshes every ten minutes and throttles requests to at most once every
 - If the composer does not accept keyboard input, restart the rebuilt Halo.app; the halo panel must become the key window when the composer is clicked.
 - If a turn is waiting, resolve the inline command/file approval or use Stop Codex before sending another request.
 
+## Ask OpenCode does not send
+
+- Confirm the bundled Halo.app can find the configured `opencode` executable. Halo launches `opencode serve --hostname 127.0.0.1 --port 0` locally with an ephemeral server password and does not store OpenCode provider credentials.
+- If the compact OpenCode pill stays on `OPN`, quit and reopen the rebuilt Halo.app. Older builds launched OpenCode's normal auth-protected server mode, which can leave the activity without a session and stuck on its connection label.
+- OpenCode sessions are discovered through the local server's session API. Click the OpenCode refresh button after creating a session in another OpenCode client; live changes normally arrive through the SSE stream without polling.
+- The composer only sends when the selected session is idle. If OpenCode is working, use Stop OpenCode or wait for the session to become ready.
+- If a permission prompt is visible, choose Allow or No before sending another message. Question-style interactive requests are not yet supported in Halo; answer those from the OpenCode client.
+- If OpenCode is not installed or the server cannot start, disable and re-enable OpenCode developer activity in Settings after correcting the CLI installation.
+
 ## Tests cannot find XCTest
 
 Use the full Xcode developer directory:

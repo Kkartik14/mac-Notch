@@ -40,7 +40,7 @@ Launch-at-login is registered through `SMAppService`; its status is read from ma
 
 ## Activity state
 
-HaloActivity has seven cases:
+HaloActivity has eight cases:
 
 - nowPlaying
 - charging
@@ -49,6 +49,7 @@ HaloActivity has seven cases:
 - weather
 - calendar
 - codex
+- openCode
 
 Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. HaloCenter.activities stores up to four activities. The array is ordered from lowest to highest priority; the last element is the activity shown in the collapsed pill.
 
@@ -59,12 +60,22 @@ The current ranks are:
 | 4 | Notification | Transient event that should be visible immediately. |
 | 3 | Now Playing | Primary live activity. |
 | 3 | Codex | Developer work is useful live context, but should not eclipse a transient notification. |
+| 3 | OpenCode | Developer work is useful live context, but should not eclipse a transient notification. |
 | 2 | Focus | Ambient system state. |
 | 2 | Calendar | Upcoming time-sensitive events and reminders. |
 | 1 | Charging | Ambient power state, with a temporary plug-in override. |
 | 0 | Weather | Quiet ambient information. |
 
-Only one activity can be expanded at a time through expandedId. present can update, expand, schedule auto-dismiss, and schedule a later collapse. collapse keeps the activity alive; dismiss removes it.
+Only one activity can be expanded at a time through expandedId. Presentation
+decisions go through [HaloPresentationPolicy](../Sources/Halo/HaloPresentation.swift):
+`.update` refreshes an activity without taking ownership of the expanded
+surface, `.expand(.user)` represents an explicit user action, `.expand(.hover)`
+is allowed only when the surface is already collapsed, and
+`.expand(.automatic)` may open an idle surface or refresh the activity that is
+already being viewed. `present` also schedules auto-dismiss and settle timers;
+generation tokens make an older delayed callback harmless after a newer update.
+`collapse` keeps the activity alive; `dismiss` removes it. Priority restoration
+never changes the expanded identifier just because the array was reordered.
 
 HaloCenter also owns:
 
@@ -84,7 +95,10 @@ Input routing has two layers:
 1. A global mouse-moved monitor quickly checks whether the cursor is over the visible pill/card and toggles ignoresMouseEvents.
 2. A 10 Hz poll backstop performs the same hit test and drives hover-open/hover-close behavior.
 
-The window is interactive only over the visible shape. Transparent regions pass mouse input through.
+Hover-open requires the pointer to have moved more than four points onto the
+visible shape, then dwell there for 300 ms. Pointer exit schedules a 300 ms
+collapse when the setting is enabled. The window is interactive only over the
+visible shape; transparent regions pass mouse input through.
 
 ## Monitor responsibilities
 
@@ -153,6 +167,14 @@ The expanded Calendar card gives the next item a fixed detail column and places 
 The monitor intentionally keeps the protocol boundary separate from SwiftUI. [CodexView.swift](../Sources/Halo/CodexView.swift) renders the same `CodexActivity` in both the compact pill and the fixed expanded card, with a scrollable chat rail, a scrollable visible activity rail, a composer, a stop action, and inline command/file approval controls. Reasoning items are omitted from the UI. User and assistant messages remain visible by default; actionable WORK items are filtered by the Codex WORK activity preference and keep primary text separate from secondary status/context when enabled. Approval prompts remain visible while a turn is waiting so the user can unblock it.
 
 The app-server process inherits the user's Codex environment and configuration. Halo never handles Codex credentials or maintains a second rollout database. If the CLI is missing, the activity reports a recoverable unavailable state. If the server sends an interactive request Halo does not implement, the client returns an explicit JSON-RPC error rather than leaving the turn pending forever.
+
+### OpenCode developer activity
+
+[OpenCodeMonitor](../Sources/Halo/OpenCodeMonitor.swift) launches the installed OpenCode CLI as `opencode serve --hostname 127.0.0.1 --port 0`, sets an ephemeral `OPENCODE_SERVER_PASSWORD` on that child, and uses OpenCode's documented default username `opencode` for its requests. It reads the listening URL from the server output. Port zero lets the operating system choose a free loopback port, so Halo does not collide with an OpenCode server the user already started. The monitor subscribes to `/api/event`, lists the newest 50 sessions from the v2 API, loads up to 100 messages for the selected session, and reads `/api/session/active` so a session that was already active before Halo started can still display as working.
+
+The monitor maps session execution, session-created/updated/deleted, status, idle, message, text-delta, tool, error, and permission events into [OpenCodeActivity](../Sources/Halo/OpenCodeMonitor.swift). Text deltas update the selected conversation immediately; an execution-complete or idle event clears the optimistic prompt and performs one history refresh. User messages go to `POST /api/session/:id/prompt`, interrupt uses `POST /api/session/:id/interrupt`, and permission choices use `POST /api/session/:id/permission/:requestID/reply`. Halo keeps OpenCode's provider credentials, model selection, tool execution, and persisted history outside the app. Question-style interactive requests are currently outside the supported UI surface.
+
+[OpenCodeView.swift](../Sources/Halo/OpenCodeView.swift) renders the session rail, conversation, composer, optional WORK summaries, stop action, and inline permission bar in the same fixed expanded geometry as Codex. It uses the shared [HaloScrollView](../Sources/Halo/HaloScrollView.swift), including the opt-in follow-the-latest-message behavior for streamed assistant output.
 
 ## Threading assumptions
 

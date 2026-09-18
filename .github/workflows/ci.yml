@@ -20,6 +20,8 @@ jobs:
 
       - name: Run Codex activity regression tests
         run: swift test --filter CodexProtocolTests
+      - name: Run OpenCode activity regression tests
+        run: swift test --filter OpenCodeProtocolTests
 
       - name: Run full test suite
         run: swift test
