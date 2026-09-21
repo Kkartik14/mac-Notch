@@ -138,9 +138,7 @@ struct ClaudeCodeExpandedView: View {
             onSelectSession(session.id)
         } label: {
             HStack(alignment: .top, spacing: 6) {
-                Circle()
-                    .fill(statusColor(session.state))
-                    .frame(width: 6, height: 6)
+                SessionActivityIndicator(isStreaming: DeveloperSessionActivity.isStreaming(session.state))
                     .padding(.top, 4)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -318,16 +316,6 @@ struct ClaudeCodeExpandedView: View {
         case .user: return .white.opacity(0.7)
         case .assistant: return Color(red: 1.0, green: 0.58, blue: 0.28).opacity(0.9)
         case .tool: return .orange.opacity(0.8)
-        }
-    }
-
-    private func statusColor(_ state: ClaudeCodeSessionState) -> Color {
-        switch state {
-        case .running: return .green
-        case .waiting: return .orange
-        case .failed: return .red
-        case .interrupted: return .yellow.opacity(0.8)
-        case .idle: return .white.opacity(0.35)
         }
     }
 

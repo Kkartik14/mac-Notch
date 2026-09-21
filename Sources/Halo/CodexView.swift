@@ -144,9 +144,7 @@ struct CodexExpandedView: View {
             onSelectChat(chat.id)
         } label: {
             HStack(alignment: .top, spacing: 6) {
-                Circle()
-                    .fill(statusColor(chat.state))
-                    .frame(width: 6, height: 6)
+                SessionActivityIndicator(isStreaming: DeveloperSessionActivity.isStreaming(chat.state))
                     .padding(.top, 4)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -361,18 +359,6 @@ struct CodexExpandedView: View {
         case .user: return .white.opacity(0.7)
         case .assistant: return .green.opacity(0.8)
         case .tool: return .orange.opacity(0.8)
-        }
-    }
-
-    private func statusColor(_ state: CodexThreadState) -> Color {
-        switch state {
-        case .running: return .green
-        case .queued: return .blue
-        case .waiting: return .orange
-        case .failed: return .red
-        case .completed: return .white.opacity(0.7)
-        case .interrupted: return .yellow.opacity(0.8)
-        case .idle: return .white.opacity(0.35)
         }
     }
 
