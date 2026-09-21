@@ -914,6 +914,7 @@ struct HaloView: View {
             Button("Calendar") { actions.showCalendar() }
             Button("Codex · Developer activity") { actions.showCodex() }
             Button("OpenCode · Developer activity") { actions.showOpenCode() }
+            Button("Claude Code · Developer activity") { actions.showClaudeCode() }
             Divider()
             Button("Pill · Music") { actions.previewPillMusic() }
             Button("Pill · Weather") { actions.previewPillWeather() }

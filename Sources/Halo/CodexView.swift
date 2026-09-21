@@ -183,7 +183,8 @@ struct CodexExpandedView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HaloMarkdownText(
                     text: message.text.isEmpty ? "Working…" : message.text,
-                    interpretsMarkdown: message.role == .assistant && !message.text.isEmpty
+                    interpretsMarkdown: message.role == .assistant && !message.text.isEmpty,
+                    workspaceRoot: activity.selectedChat?.cwd
                 )
                     .font(.system(size: 10, weight: message.role == .tool ? .medium : .regular, design: message.role == .tool ? .monospaced : .default))
                     .foregroundColor(.white.opacity(message.role == .tool ? 0.58 : 0.82))

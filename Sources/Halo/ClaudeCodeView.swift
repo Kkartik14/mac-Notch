@@ -177,7 +177,8 @@ struct ClaudeCodeExpandedView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HaloMarkdownText(
                     text: message.text.isEmpty ? "Working…" : message.text,
-                    interpretsMarkdown: message.role == .assistant && !message.text.isEmpty
+                    interpretsMarkdown: message.role == .assistant && !message.text.isEmpty,
+                    workspaceRoot: activity.selectedSession?.directory
                 )
                     .font(.system(
                         size: 10,
