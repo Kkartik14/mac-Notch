@@ -23,6 +23,7 @@ let package = Package(
                 .linkedFramework("UserNotifications"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreFoundation"),
+                .linkedFramework("CoreServices"),
                 .linkedFramework("CoreLocation"),
                 .linkedFramework("EventKit"),
                 .linkedFramework("ServiceManagement")

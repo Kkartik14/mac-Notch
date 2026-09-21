@@ -368,6 +368,12 @@ struct SettingsRootView: View {
                         description: "Show OpenCode WORK actions and their secondary details. Permission prompts remain visible. Off by default.",
                         isOn: $settings.showOpenCodeWorkActivity
                     )
+                    settingToggle("Claude Code developer activity", description: "Recent Claude Code sessions, live work, and a local composer.", isOn: $settings.showClaudeCode)
+                    settingToggle(
+                        "Claude Code WORK activity",
+                        description: "Show Claude Code tool actions and their secondary details. Off by default.",
+                        isOn: $settings.showClaudeCodeWorkActivity
+                    )
                 }
             }
         }

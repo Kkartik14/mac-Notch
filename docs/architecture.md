@@ -40,7 +40,7 @@ Launch-at-login is registered through `SMAppService`; its status is read from ma
 
 ## Activity state
 
-HaloActivity has eight cases:
+HaloActivity has nine cases:
 
 - nowPlaying
 - charging
@@ -50,6 +50,7 @@ HaloActivity has eight cases:
 - calendar
 - codex
 - openCode
+- claudeCode
 
 Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. HaloCenter.activities stores up to four activities. The array is ordered from lowest to highest priority; the last element is the collapsed-pill fallback when no explicit activity override is active.
 
@@ -61,6 +62,7 @@ The current ranks are:
 | 3 | Now Playing | Primary live activity. |
 | 3 | Codex | Developer work is useful live context, but should not eclipse a transient notification. |
 | 3 | OpenCode | Developer work is useful live context, but should not eclipse a transient notification. |
+| 3 | Claude Code | Developer work is useful live context, but should not eclipse a transient notification. |
 | 2 | Focus | Ambient system state. |
 | 2 | Calendar | Upcoming time-sensitive events and reminders. |
 | 1 | Charging | Ambient power state, with a temporary plug-in override. |
@@ -84,6 +86,13 @@ activity releases or replaces the override. Ordinary `collapse` keeps the
 activity and selection alive while returning the surface to its pill. Priority
 restoration never changes the expanded identifier just because the array was
 reordered.
+
+Assistant chat rows from Codex, OpenCode, and Claude Code use the shared
+[HaloMarkdownText](../Sources/Halo/HaloMarkdown.swift) renderer. It parses
+inline Markdown with whitespace preservation, so emphasis and links are
+rendered as rich selectable text and links remain clickable. User prompts and
+tool/work rows remain literal text; block-level Markdown is intentionally not
+interpreted in the compact conversation view.
 
 HaloCenter also owns:
 
@@ -173,7 +182,7 @@ The expanded Calendar card gives the next item a fixed detail column and places 
 
 ### Codex developer activity
 
-[CodexMonitor](../Sources/Halo/CodexMonitor.swift) launches the installed Codex CLI as `codex app-server --stdio` and speaks newline-delimited JSON-RPC. It performs the protocol handshake, lists recent threads, selects the newest-created thread when no chat has been selected, loads up to 100 visible items for the selected thread, and maps app-server lifecycle notifications into Halo value types. `updatedAt` is used only as a tie-breaker for that initial choice. User messages are sent with `turn/start`; stored threads are resumed first, including paginated records whose list response omits direct-input capability, and an explicit New chat action uses `thread/start` in the selected workspace. The resume response is the capability check before a pending message is sent. If the selected thread is already owned by another active Codex session, an active-writer error triggers the experimental `thread/queue/add` handoff instead of being mistaken for a successful resume. Halo keeps the optimistic user message visible, marks the thread `QUE`, and performs a short one-second history refresh for up to two minutes so the separate session's persisted response can appear. If the queue handoff fails, or the server explicitly returns a non-writable capability, `CodexMonitor` keeps that chat read-only/failed and does not silently switch conversations.
+[CodexMonitor](../Sources/Halo/CodexMonitor.swift) launches the installed Codex CLI as `codex app-server --stdio` and speaks newline-delimited JSON-RPC. It performs the protocol handshake, lists recent threads, selects the newest-created thread when no chat has been selected, loads up to 100 visible items for the selected thread, and maps app-server lifecycle notifications into Halo value types. `updatedAt` is used only as a tie-breaker for that initial choice. User messages are sent with `turn/start`; stored threads are resumed first, including paginated records whose list response omits direct-input capability, and an explicit New chat action uses `thread/start` in the selected workspace. The resume response is the capability check before a pending message is sent. If the selected thread is already owned by another active Codex session, an active-writer error triggers the experimental `thread/queue/add` handoff instead of being mistaken for a successful resume. Halo keeps the optimistic user message visible, marks the thread `QUE`, and performs a short one-second history refresh for up to two minutes so the separate session's persisted response can appear. Same-thread history refresh requests coalesce: an update arriving during a request schedules one follow-up fetch rather than being dropped. If the queue handoff fails, or the server explicitly returns a non-writable capability, `CodexMonitor` keeps that chat read-only/failed and does not silently switch conversations.
 
 The monitor intentionally keeps the protocol boundary separate from SwiftUI. [CodexView.swift](../Sources/Halo/CodexView.swift) renders the same `CodexActivity` in both the compact pill and the fixed expanded card, with a scrollable chat rail, a scrollable visible activity rail, a composer, a stop action, and inline command/file approval controls. Reasoning items are omitted from the UI. User and assistant messages remain visible by default; actionable WORK items are filtered by the Codex WORK activity preference and keep primary text separate from secondary status/context when enabled. Approval prompts remain visible while a turn is waiting so the user can unblock it.
 
@@ -183,9 +192,17 @@ The app-server process inherits the user's Codex environment and configuration. 
 
 [OpenCodeMonitor](../Sources/Halo/OpenCodeMonitor.swift) launches the installed OpenCode CLI as `opencode serve --hostname 127.0.0.1 --port 0`, sets an ephemeral `OPENCODE_SERVER_PASSWORD` on that child, and uses OpenCode's documented default username `opencode` for its requests. It reads the listening URL from the server output. Port zero lets the operating system choose a free loopback port, so Halo does not collide with an OpenCode server the user already started. The monitor subscribes to `/api/event`, lists the newest 50 sessions from the v2 API, loads up to 100 messages for the selected session, and reads `/api/session/active` so a session that was already active before Halo started can still display as working.
 
-The monitor maps session execution, session-created/updated/deleted, status, idle, message, text-delta, tool, error, and permission events into [OpenCodeActivity](../Sources/Halo/OpenCodeMonitor.swift). Text deltas update the selected conversation immediately; an execution-complete or idle event clears the optimistic prompt and performs one history refresh. User messages go to `POST /api/session/:id/prompt`, interrupt uses `POST /api/session/:id/interrupt`, and permission choices use `POST /api/session/:id/permission/:requestID/reply`. Halo keeps OpenCode's provider credentials, model selection, tool execution, and persisted history outside the app. Question-style interactive requests are currently outside the supported UI surface.
+The monitor maps session execution, session-created/updated/deleted, status, idle, message, text-delta, tool, error, and permission events into [OpenCodeActivity](../Sources/Halo/OpenCodeMonitor.swift). Text deltas update the selected conversation immediately; an execution-complete or idle event clears the optimistic prompt and refreshes history. Same-session refreshes coalesce so updates received during a fetch trigger one follow-up request. User messages go to `POST /api/session/:id/prompt`, interrupt uses `POST /api/session/:id/interrupt`, and permission choices use `POST /api/session/:id/permission/:requestID/reply`. Halo keeps OpenCode's provider credentials, model selection, tool execution, and persisted history outside the app. Question-style interactive requests are currently outside the supported UI surface.
 
 [OpenCodeView.swift](../Sources/Halo/OpenCodeView.swift) renders the session rail, conversation, composer, optional WORK summaries, stop action, and inline permission bar in the same fixed expanded geometry as Codex. It uses the shared [HaloScrollView](../Sources/Halo/HaloScrollView.swift), including the opt-in follow-the-latest-message behavior for streamed assistant output.
+
+### Claude Code developer activity
+
+[ClaudeCodeMonitor](../Sources/Halo/ClaudeCodeMonitor.swift) keeps the Claude Code protocol boundary separate from SwiftUI. It discovers persisted `.jsonl` transcripts below `~/.claude/projects`, deduplicates them by session ID, keeps the newest 50, and selects the newest-created session when there is no explicit selection. Transcript parsing keeps user/assistant conversation and useful `tool_use` summaries while omitting private thinking, signatures, and sidechain-only messages. [ClaudeTranscriptWatcher](../Sources/Halo/ClaudeTranscriptWatcher.swift) uses file-level FSEvents rather than polling: changed transcripts are reread individually, while directory changes trigger a bounded session discovery scan. External session creation, transcript updates, and deletions therefore appear without a manual refresh. Watch events are ignored while Halo's own Claude CLI turn is running; its structured stream remains the live source, followed by a transcript refresh when the turn ends.
+
+Halo-owned turns launch the installed `claude` executable in print mode with newline-delimited `stream-json`, verbose partial events, and manual permissions. Existing sessions use `--resume`; a new session receives a generated UUID through `--session-id`. `stream_event` text deltas update the selected assistant row immediately, `tool_use` blocks become optional WORK rows, `result` closes the turn, and SIGTERM is used for Stop. Claude Code remains the owner of authentication, model/provider configuration, permission policy, tool execution, and transcript persistence. Halo never scrapes terminal output, reads credential stores, or passes a skip-permissions flag. Print-mode permission denials are surfaced as an actionable explanation rather than being silently approved.
+
+[ClaudeCodeView.swift](../Sources/Halo/ClaudeCodeView.swift) renders the bounded session rail, conversation, composer, streaming follow-to-bottom behavior, optional WORK rows, and stop action in the same fixed surface as Codex and OpenCode. [ClaudeMark.swift](../Sources/Halo/ClaudeMark.swift) renders Anthropic's official Claude/Anthropic starburst mark only as provider attribution; it is not used for routing or selection.
 
 ## Threading assumptions
 

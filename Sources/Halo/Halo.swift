@@ -42,6 +42,7 @@ enum HaloActivity: Equatable, Identifiable {
     case calendar(CalendarActivity)
     case codex(CodexActivity)
     case openCode(OpenCodeActivity)
+    case claudeCode(ClaudeCodeActivity)
 
     var id: String {
         switch self {
@@ -53,6 +54,7 @@ enum HaloActivity: Equatable, Identifiable {
         case .calendar: return "calendar"
         case .codex: return "codex"
         case .openCode: return "openCode"
+        case .claudeCode: return "claudeCode"
         }
     }
 }
@@ -145,6 +147,7 @@ final class HaloCenter: ObservableObject {
         case .calendar: return 2
         case .codex: return 3
         case .openCode: return 3
+        case .claudeCode: return 3
         case .charging: return 1
         case .weather: return 0
         }
@@ -184,6 +187,14 @@ final class HaloCenter: ObservableObject {
     var onSendOpenCode: ((String) -> Void)?
     var onInterruptOpenCode: (() -> Void)?
     var onResolveOpenCodePermission: ((OpenCodePermissionDecision) -> Void)?
+    /// Claude Code developer activity callbacks. Claude owns authentication,
+    /// permissions, and transcript persistence; Halo only starts its local
+    /// print-mode stream and renders the value model.
+    var onSelectClaudeCodeSession: ((String) -> Void)?
+    var onNewClaudeCodeSession: (() -> Void)?
+    var onRefreshClaudeCode: (() -> Void)?
+    var onSendClaudeCode: ((String) -> Void)?
+    var onInterruptClaudeCode: (() -> Void)?
 
     private var autoDismissWorkItems: [String: DispatchWorkItem] = [:]
     private var collapseWorkItems: [String: DispatchWorkItem] = [:]
@@ -806,6 +817,7 @@ struct HaloActions {
     var showCalendar: () -> Void = {}
     var showCodex: () -> Void = {}
     var showOpenCode: () -> Void = {}
+    var showClaudeCode: () -> Void = {}
     var previewPillMusic: () -> Void = {}
     var previewPillWeather: () -> Void = {}
     var previewPillCharging: () -> Void = {}
@@ -1042,6 +1054,8 @@ struct HaloView: View {
             OpenAIMarkView(size: 20)
         case .openCode:
             OpenCodeMarkView(size: 20)
+        case .claudeCode:
+            ClaudeMarkView(size: 20)
         default:
             inlineDot(for: activity)
         }
@@ -1089,6 +1103,12 @@ struct HaloView: View {
                 .lineLimit(1)
                 .frame(width: 30, alignment: .trailing)
         case .openCode(let c):
+            Text(c.compactLabel)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .frame(width: 30, alignment: .trailing)
+        case .claudeCode(let c):
             Text(c.compactLabel)
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(.white)
@@ -1240,6 +1260,15 @@ struct HaloView: View {
             onInterrupt: { [weak center] in center?.onInterruptOpenCode?() },
             onResolvePermission: { [weak center] decision in center?.onResolveOpenCodePermission?(decision) }
         )
+        case .claudeCode(let c): ClaudeCodeExpandedView(
+            activity: c,
+            showWorkActivity: settings.showClaudeCodeWorkActivity,
+            onSelectSession: { [weak center] id in center?.onSelectClaudeCodeSession?(id) },
+            onNewSession: { [weak center] in center?.onNewClaudeCodeSession?() },
+            onRefresh: { [weak center] in center?.onRefreshClaudeCode?() },
+            onSend: { [weak center] text in center?.onSendClaudeCode?(text) },
+            onInterrupt: { [weak center] in center?.onInterruptClaudeCode?() }
+        )
         }
     }
 
@@ -1265,6 +1294,8 @@ struct HaloView: View {
             OpenAIMarkView(size: size)
         } else if case .openCode = activity {
             OpenCodeMarkView(size: size)
+        } else if case .claudeCode = activity {
+            ClaudeMarkView(size: size)
         } else {
             let (name, color) = iconSpec(for: activity)
             ZStack {
@@ -1286,6 +1317,7 @@ struct HaloView: View {
         case .calendar: return ("calendar", .orange)
         case .codex: return ("terminal.fill", .gray)
         case .openCode: return ("chevron.left.forwardslash.chevron.right", .gray)
+        case .claudeCode: return ("circle.fill", .orange)
         }
     }
 
@@ -1299,6 +1331,7 @@ struct HaloView: View {
         case .calendar: return "Calendar"
         case .codex: return "Codex"
         case .openCode: return "OpenCode"
+        case .claudeCode: return "Claude Code"
         }
     }
 
@@ -1313,6 +1346,7 @@ struct HaloView: View {
         case .calendar(let c): Text(c.nextItem?.title ?? "Calendar").font(.system(size: size, weight: .semibold))
         case .codex(let c): Text(c.selectedChat?.title ?? "Codex").font(.system(size: size, weight: .semibold))
         case .openCode(let c): Text(c.selectedSession?.title ?? "OpenCode").font(.system(size: size, weight: .semibold))
+        case .claudeCode(let c): Text(c.selectedSession?.title ?? "Claude Code").font(.system(size: size, weight: .semibold))
         }
     }
 

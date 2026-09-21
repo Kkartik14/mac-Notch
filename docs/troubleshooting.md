@@ -83,6 +83,15 @@ Weather refreshes every ten minutes and throttles requests to at most once every
 - If a permission prompt is visible, choose Allow or No before sending another message. Question-style interactive requests are not yet supported in Halo; answer those from the OpenCode client.
 - If OpenCode is not installed or the server cannot start, disable and re-enable OpenCode developer activity in Settings after correcting the CLI installation.
 
+## Ask Claude Code does not send
+
+- Confirm the bundled Halo.app can find the authenticated `claude` executable. Halo launches Claude Code in print mode and does not read or store Anthropic credentials. `command -v claude`, `claude --version`, and `claude auth status` are useful read-only checks.
+- Claude Code activity discovers persisted sessions from `~/.claude/projects`. Click the Claude Code refresh button after creating a session outside Halo; Halo-owned turns do not need polling because their JSON stream is live.
+- The composer resumes an existing session by its Claude session ID. A new session is created from the `+` button and uses the current working directory available to Halo. If the directory is not accessible, Claude Code reports the launch error in the card.
+- Halo starts print-mode turns with manual permissions and never uses `--dangerously-skip-permissions`. If a tool is denied, review Claude Code's permission configuration or continue from Claude Code itself; the denial is not an approval prompt that Halo can silently bypass.
+- While a turn is running, the composer is disabled. Use Stop Claude Code or wait for the final result before sending another message.
+- If Claude Code is not installed or its authentication has expired, enable the source in Settings after correcting the CLI installation or signing in with Claude Code.
+
 ## Tests cannot find XCTest
 
 Use the full Xcode developer directory:

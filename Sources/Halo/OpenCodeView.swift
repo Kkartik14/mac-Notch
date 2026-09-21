@@ -180,7 +180,10 @@ struct OpenCodeExpandedView: View {
                 .frame(width: 28, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(message.text.isEmpty ? "Working…" : message.text)
+                HaloMarkdownText(
+                    text: message.text.isEmpty ? "Working…" : message.text,
+                    interpretsMarkdown: message.role == .assistant && !message.text.isEmpty
+                )
                     .font(.system(size: 10, weight: message.role == .tool ? .medium : .regular, design: message.role == .tool ? .monospaced : .default))
                     .foregroundColor(.white.opacity(message.role == .tool ? 0.58 : 0.82))
                     .lineLimit(message.role == .tool ? 1 : 4)

@@ -242,7 +242,7 @@ final class OpenCodeMonitor: NSObject, ObservableObject, URLSessionDataDelegate 
     private var pendingMessageTexts: [String: String] = [:]
     private var optimisticMessageIDs: [String: String] = [:]
     private var messagesBySession: [String: [OpenCodeMessage]] = [:]
-    private var loadingSessionIDs = Set<String>()
+    private var messageRefreshes = RefreshCoalescer<String>()
     private var serverPassword: String?
 
     var activity: OpenCodeActivity {
@@ -302,6 +302,7 @@ final class OpenCodeMonitor: NSObject, ObservableObject, URLSessionDataDelegate 
 
         isStopping = false
         processGeneration &+= 1
+        messageRefreshes.reset()
         let generation = processGeneration
         serverURL = nil
         serverPassword = nil
@@ -387,7 +388,7 @@ final class OpenCodeMonitor: NSObject, ObservableObject, URLSessionDataDelegate 
         outputHandle = nil
         errorHandle = nil
         serverURL = nil
-        loadingSessionIDs.removeAll()
+        messageRefreshes.reset()
         pendingPermission = nil
         pendingNewMessage = nil
         pendingMessageTexts.removeAll()
@@ -891,13 +892,19 @@ final class OpenCodeMonitor: NSObject, ObservableObject, URLSessionDataDelegate 
     private func loadMessages(for sessionID: String) {
         guard process?.isRunning == true,
               serverURL != nil,
-              !loadingSessionIDs.contains(sessionID) else { return }
-        loadingSessionIDs.insert(sessionID)
+              messageRefreshes.begin(sessionID) else { return }
+        let generation = processGeneration
         get(path: Self.apiPath("/session/\(sessionID)/message"), query: [URLQueryItem(name: "limit", value: "100")]) { [weak self] data, status, error in
             guard let self else { return }
             let parsed = data.map { Self.parseMessages(from: Self.parseMessageEntries(from: $0)) } ?? []
             DispatchQueue.main.async {
-                self.loadingSessionIDs.remove(sessionID)
+                guard generation == self.processGeneration,
+                      !self.isStopping,
+                      self.serverURL != nil else { return }
+                if self.messageRefreshes.finish(sessionID) {
+                    self.loadMessages(for: sessionID)
+                    return
+                }
                 guard status >= 200, status < 300 else {
                     self.errorMessage = Self.requestError(status: status, error: error, fallback: "OpenCode could not load this session.")
                     self.publishActivity()
@@ -1044,7 +1051,8 @@ final class OpenCodeMonitor: NSObject, ObservableObject, URLSessionDataDelegate 
 
     // MARK: Event handling
 
-    private func handleEvent(_ rawEvent: [String: Any]) {
+    // Module-internal so protocol tests verify the event-to-activity callback.
+    func handleEvent(_ rawEvent: [String: Any]) {
         let event = Self.parseEvent(rawEvent)
         guard let type = Self.string(event["type"]),
               let properties = event["properties"] as? [String: Any] else { return }
@@ -1378,6 +1386,7 @@ final class OpenCodeMonitor: NSObject, ObservableObject, URLSessionDataDelegate 
         urlSession?.invalidateAndCancel()
         urlSession = nil
         serverURL = nil
+        messageRefreshes.reset()
         connection = status == 0 ? .stopped : .failed
         if status != 0 {
             let diagnostic = serverErrorBuffer

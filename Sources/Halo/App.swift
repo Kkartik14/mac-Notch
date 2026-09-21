@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let historyMonitor = PlaybackHistoryMonitor()
     private let codexMonitor = CodexMonitor()
     private let openCodeMonitor = OpenCodeMonitor()
+    private let claudeCodeMonitor = ClaudeCodeMonitor()
     private let settingsWindowController = HaloSettingsWindowController()
     private let settings = HaloSettings.shared
     private var settingsObservation: AnyCancellable?
@@ -34,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var codexRequested = false
     private var openCodeWasWaiting = false
     private var openCodeRequested = false
+    private var claudeCodeWasWaiting = false
+    private var claudeCodeRequested = false
 
     /// Transport routing: the player that is currently playing owns the
     /// keys. Otherwise prefer Spotify, then Music, then system MediaRemote.
@@ -160,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showCalendar: { [weak self] in self?.showCalendar() },
             showCodex: { [weak self] in self?.showCodex() },
             showOpenCode: { [weak self] in self?.showOpenCode() },
+            showClaudeCode: { [weak self] in self?.showClaudeCode() },
             previewPillMusic: { [weak self] in self?.previewPill("nowPlaying") },
             previewPillWeather: { [weak self] in self?.previewPill("weather") },
             previewPillCharging: { [weak self] in self?.previewPill("charging") },
@@ -231,6 +235,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if openCodeMonitor.connection == .stopped {
             openCodeMonitor.start()
         }
+        if !settings.showClaudeCode {
+            haloController.center.dismiss("claudeCode")
+            claudeCodeMonitor.stop()
+        } else if claudeCodeMonitor.connection == .stopped {
+            claudeCodeMonitor.start()
+        }
     }
 
     private func startMonitors() {
@@ -293,6 +303,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openCodeMonitor.resolvePermission(decision)
         }
 
+        haloController.center.onSelectClaudeCodeSession = { [weak self] id in
+            self?.claudeCodeMonitor.selectSession(id)
+        }
+        haloController.center.onNewClaudeCodeSession = { [weak self] in
+            self?.claudeCodeMonitor.createSession()
+        }
+        haloController.center.onRefreshClaudeCode = { [weak self] in
+            self?.claudeCodeMonitor.refresh()
+        }
+        haloController.center.onSendClaudeCode = { [weak self] text in
+            self?.claudeCodeMonitor.send(text)
+        }
+        haloController.center.onInterruptClaudeCode = { [weak self] in
+            self?.claudeCodeMonitor.interrupt()
+        }
+
         // Codex — a local app-server stream, never terminal scraping. The
         // monitor publishes the same activity for the compact pill and the
         // fixed-size expanded chat workspace.
@@ -334,6 +360,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         if settings.showOpenCode { openCodeMonitor.start() }
+
+        // Claude Code — local print-mode JSON streaming. Claude owns
+        // authentication, permissions, and transcript persistence; this
+        // adapter only exposes sessions and live developer activity.
+        claudeCodeMonitor.onActivity = { [weak self] activity in
+            guard let self, self.settings.showClaudeCode else { return }
+            let shouldSurface = !activity.sessions.isEmpty || self.claudeCodeRequested
+            guard shouldSurface else { return }
+
+            let becameWaiting = activity.selectedState == .waiting && !self.claudeCodeWasWaiting
+            self.claudeCodeWasWaiting = activity.selectedState == .waiting
+            self.haloController.show(
+                .claudeCode(activity),
+                autoDismissAfter: nil,
+                intent: becameWaiting && self.settings.automaticallyExpandActivities
+                    ? .expand(.automatic)
+                    : .update,
+                collapseAfter: nil
+            )
+        }
+        if settings.showClaudeCode { claudeCodeMonitor.start() }
 
         // Now Playing — track changes pop the card open and it STAYS open
         // until dismissed. No auto-collapse: collapsing on its own is what
@@ -595,6 +642,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let openCodeItem = NSMenuItem(title: "OpenCode · Developer activity", action: #selector(showOpenCode), keyEquivalent: "o")
         openCodeItem.target = self
         menu.addItem(openCodeItem)
+        let claudeCodeItem = NSMenuItem(title: "Claude Code · Developer activity", action: #selector(showClaudeCode), keyEquivalent: "l")
+        claudeCodeItem.target = self
+        menu.addItem(claudeCodeItem)
         let pillMenu = NSMenu()
         let pillDefs: [(String, Selector)] = [
             ("Pill · Music", #selector(previewPillMusic)),
@@ -705,6 +755,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openCodeRequested = true
         openCodeMonitor.start()
         haloController.show(.openCode(openCodeMonitor.activity), autoDismissAfter: nil, intent: .expand(.user))
+    }
+
+    /// Open Claude Code activity in Halo's existing fixed expanded surface.
+    /// Claude Code remains responsible for authentication and permissions;
+    /// Halo only starts a structured local stream when a turn is sent.
+    @objc private func showClaudeCode() {
+        guard settings.showClaudeCode else {
+            openSettings()
+            return
+        }
+        claudeCodeRequested = true
+        claudeCodeMonitor.start()
+        haloController.show(.claudeCode(claudeCodeMonitor.activity), autoDismissAfter: nil, intent: .expand(.user))
     }
 
     /// Preview any activity as a settled pill, using live data when

@@ -257,6 +257,7 @@ final class CodexMonitor: ObservableObject {
     private var loadedThreadIDs = Set<String>()
     private var currentTurnIDs: [String: String] = [:]
     private var messagesByThread: [String: [CodexMessage]] = [:]
+    private var messageRefreshes = RefreshCoalescer<String>()
     private var serverRequestIDs: [String: Any] = [:]
     private var isStopping = false
     private var stderrBuffer = ""
@@ -305,6 +306,7 @@ final class CodexMonitor: ObservableObject {
 
         isStopping = false
         processGeneration &+= 1
+        messageRefreshes.reset()
         let generation = processGeneration
         errorMessage = nil
         connection = .starting
@@ -390,6 +392,7 @@ final class CodexMonitor: ObservableObject {
         outputHandle = nil
         errorHandle = nil
         pendingRequests.removeAll()
+        messageRefreshes.reset()
         pendingTurnText.removeAll()
         queuedMessageTexts.removeAll()
         queuedThreadIDs.removeAll()
@@ -741,6 +744,10 @@ final class CodexMonitor: ObservableObject {
 
         case "thread/items/list":
             guard let threadID = request.threadID else { return }
+            if messageRefreshes.finish(threadID) {
+                loadMessages(for: threadID)
+                return
+            }
             let entries = result["data"] as? [[String: Any]] ?? []
             // The request asks for descending order so the newest work is
             // cheap to fetch; reverse it back into conversation order.
@@ -837,6 +844,11 @@ final class CodexMonitor: ObservableObject {
     private func handleRequestError(_ error: [String: Any], request: PendingRequest) {
         let message = Self.string(error["message"]) ?? "Codex request failed."
         if request.method == "thread/items/list" {
+            if let threadID = request.threadID,
+               messageRefreshes.finish(threadID) {
+                loadMessages(for: threadID)
+                return
+            }
             // A stored/paginated thread may reject a history read until it is
             // resumed. Keep any pending composer text alive so thread/resume
             // can still continue the selected conversation.
@@ -868,7 +880,8 @@ final class CodexMonitor: ObservableObject {
         publishActivity()
     }
 
-    private func handleNotification(method: String, params: [String: Any]) {
+    // Module-internal so protocol tests verify the event-to-activity callback.
+    func handleNotification(method: String, params: [String: Any]) {
         switch method {
         case "thread/status/changed":
             guard let threadID = Self.string(params["threadId"]) else { return }
@@ -980,6 +993,8 @@ final class CodexMonitor: ObservableObject {
         inputHandle = nil
         outputHandle = nil
         errorHandle = nil
+        pendingRequests.removeAll()
+        messageRefreshes.reset()
         connection = status == 0 ? .stopped : .failed
         if status != 0 {
             let stderr = stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1001,9 +1016,7 @@ final class CodexMonitor: ObservableObject {
 
     private func loadMessages(for threadID: String) {
         guard process?.isRunning == true,
-              !pendingRequests.values.contains(where: {
-                  $0.method == "thread/items/list" && $0.threadID == threadID
-              }) else { return }
+              messageRefreshes.begin(threadID) else { return }
         _ = request(
             method: "thread/items/list",
             params: [

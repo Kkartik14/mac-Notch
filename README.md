@@ -32,6 +32,7 @@ Once a valid Developer ID certificate and notarization credentials are available
 - New notification activities from the macOS usernoted database when it is readable.
 - Codex developer activity through the local `codex app-server`: recent chats, repository/branch context, live work updates, approval prompts, and a composer for sending turns.
 - OpenCode developer activity through its local HTTP/SSE server: recent sessions, repository context, live streamed replies, permission prompts, and a composer for continuing sessions.
+- Claude Code developer activity through its local CLI JSON stream: recent transcript sessions, repository context, live streamed replies, tool activity, and a composer for continuing sessions.
 - An app-like Settings window with persistent behavior, activity, playback, calendar, appearance, and permission controls.
 - Right-click actions and preview pills for exercising each activity design.
 
@@ -41,6 +42,7 @@ Once a valid Developer ID certificate and notarization credentials are available
 - Swift/Xcode capable of building the macOS target.
 - Full Xcode is required to run XCTest on the current development machine. Command Line Tools alone can build the executable but do not provide xctest there.
 - Music and Spotify are optional. Weather requires network access; Apple Music metadata/artwork and Spotify artwork also use network requests.
+- Claude Code activity is optional and requires the Claude Code CLI to be installed and authenticated separately.
 
 ## Build and run
 
@@ -90,7 +92,7 @@ The tests cover activity-stack behavior, fixed-window positioning, priority orde
 The app starts with an idle Halo pill. Monitors then update a shared activity stack. The highest-priority activity is shown in the collapsed pill unless an explicit secondary-click selection is active:
 
 ~~~text
-        Notification → Codex/OpenCode/Now Playing → Calendar/Focus → Charging → Weather
+        Notification → Codex/OpenCode/Claude Code/Now Playing → Calendar/Focus → Charging → Weather
 ~~~
 
 Activities are updated in place by identifier, and the stack is capped at four entries. Track changes and Focus activation pop open their cards briefly before settling back to a live pill. A fresh plug-in temporarily promotes Charging. Notifications are transient; Music, Spotify, Calendar, Focus, Battery, and Weather remain available until their source clears or the user dismisses them.
@@ -123,6 +125,14 @@ When the OpenCode activity source is enabled, Halo launches `opencode serve --ho
 
 OpenCode remains responsible for provider authentication, model selection, tool execution, sandboxing, and persisted session history. Halo does not read or store OpenCode credentials. Permission requests appear inline with Allow/No actions; WORK activity is hidden by default and can be enabled from Settings → Live Activities → OpenCode WORK activity. The current integration supports session history, text streaming, tool summaries, interrupt, and permission responses. OpenCode's richer question-style interactive requests are not yet rendered in Halo.
 
+## Claude Code developer activity
+
+When the Claude Code activity source is enabled, Halo discovers local Claude Code transcript files under `~/.claude/projects`, loads the newest 50 sessions, and opens the newest-created session by default. The selected transcript is parsed into conversation rows while private thinking/signature blocks and sidechain-only entries stay out of the UI. The expanded activity uses the same fixed 640×190 surface: sessions stay in the left rail, the selected conversation stays on the right, and the composer continues the selected session with its session ID.
+
+New turns run Claude Code in print mode with `--output-format stream-json`, `--verbose`, `--include-partial-messages`, and manual permissions. Text deltas are rendered as they arrive; assistant replies share inline Markdown rendering across Codex, OpenCode, and Claude Code (bold, emphasis, inline code, strikethrough, and clickable links), while tool rows stay literal. Tool-use events become optional WORK rows, and the stream's final result closes the turn. New sessions receive a Claude session ID, while existing sessions use `--resume`. Halo never scrapes terminal ANSI output, reads Anthropic credentials, or enables `--dangerously-skip-permissions`; Claude Code remains responsible for authentication, model selection, tool execution, permission policy, and transcript persistence. If print mode denies a tool, Halo reports the denial and leaves the permission decision to Claude Code's own configuration/client.
+
+The compact and expanded Claude Code surfaces use Anthropic's official Claude/Anthropic starburst mark as provider attribution. WORK activity is hidden by default and can be enabled from Settings → Live Activities → Claude Code WORK activity. Refresh discovers sessions created outside Halo; Halo-owned turns stream live without polling.
+
 ## Music and recently played behavior
 
 Music is read through AppleScript because direct MediaRemote reads are unreliable for Apple Music on recent macOS versions. On a track change Halo reads the title, artist, album, player state, position, duration, and artwork. Live status uses an adaptive poll: once per second while playing, every three seconds while paused, and a low-power fifteen-second backstop while Music is not running. User actions and Music lifecycle events use short follow-up probes so the card catches up quickly without making AppleScript calls continuously. It then tries to resolve the next three tracks:
@@ -139,7 +149,7 @@ The detailed source and precedence rules are in docs/architecture.md.
 
 ## Settings and persistence
 
-Open **Settings…** from Halo's right-click menu. The settings window uses a tabbed, app-like layout for startup, pointer behavior, live activity visibility, Codex/OpenCode WORK activity visibility, music rails, Calendar/Reminders presentation, motion, permissions, and project information.
+Open **Settings…** from Halo's right-click menu. The settings window uses a tabbed, app-like layout for startup, pointer behavior, live activity visibility, Codex/OpenCode/Claude Code WORK activity visibility, music rails, Calendar/Reminders presentation, motion, permissions, and project information.
 
 Display preferences are stored in macOS `UserDefaults` and are restored on relaunch. Launch-at-login is read from `SMAppService`, so macOS remains the source of truth for that registration. Permission grants are managed by macOS TCC; Halo reads the current status and stores only whether it has already made an automatic request, preventing repeated launch-time prompts. The Permissions tab offers an intentional retry or a direct link to the relevant System Settings pane.
 
@@ -172,6 +182,7 @@ Halo does not run a backend or maintain its own activity database. It stores pre
 | Sources/Halo/CalendarMonitor.swift | EventKit events/reminders adapter and reminder completion. |
 | Sources/Halo/CodexMonitor.swift / CodexView.swift | Local Codex app-server client, chat/activity model, and fixed-size Codex workspace UI. |
 | Sources/Halo/OpenCodeMonitor.swift / OpenCodeView.swift | Local OpenCode HTTP/SSE client, session/activity model, and fixed-size OpenCode workspace UI. |
+| Sources/Halo/ClaudeCodeMonitor.swift / ClaudeCodeView.swift / ClaudeMark.swift | Local Claude Code CLI JSON-stream client, transcript/session model, provider mark, and fixed-size Claude workspace UI. |
 | Sources/Halo/HaloSettings.swift | Persisted preferences, login-item state, and permission request ledger. |
 | Sources/Halo/SettingsRootView.swift | App-like tabbed Settings and permissions UI. |
 | Tests/HaloTests/HaloTests.swift / CalendarTests.swift / SettingsTests.swift | Unit and lightweight host integration tests. |
@@ -187,6 +198,7 @@ Halo does not run a backend or maintain its own activity database. It stores pre
 - The context-menu Notification action is demo data. The notification monitor only emits rows created after it establishes its startup baseline.
 - Codex requires the Codex CLI to be installed and authenticated on the Mac. Halo currently supports visible chat history, continuing stored chats, normal text turns, command/file approvals, and the common app-server lifecycle events; richer interactive requests such as tool questionnaires are reported as unsupported. A chat explicitly reported as unable to accept direct input remains read-only; use + New chat when that happens.
 - OpenCode requires the OpenCode CLI to be installed and configured on the Mac. Halo currently supports visible session history, continuing stored sessions, streamed text prompts, tool summaries, interrupt, and permission responses; richer question-style interactive requests are not yet rendered. Disable OpenCode developer activity in Settings when the CLI is not installed or when its local server should not run.
+- Claude Code requires the Claude Code CLI to be installed and authenticated on the Mac. Halo discovers local transcript history, resumes selected sessions, streams Halo-owned print-mode turns, shows tool summaries, and supports interrupt. Halo does not attach to an arbitrary already-running interactive terminal process, and print-mode permission denials must be resolved through Claude Code's own permission configuration/client.
 - Recent-track replay currently opens a Music deep link. The stored catalog ID is reserved for a future MusicKit-based playback path.
 - MediaRemote is a private framework and may change across macOS releases.
 - Public distribution still requires a Developer ID signature and notarization. `release.sh` supports those steps when credentials are available; otherwise it creates an unsigned beta archive. See docs/release.md.

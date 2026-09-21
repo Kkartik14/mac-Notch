@@ -209,4 +209,35 @@ final class OpenCodeProtocolTests: XCTestCase {
             changed.conversationScrollToken(showWorkActivity: false)
         )
     }
+
+    func testLiveTextDeltaPublishesUpdatedActivity() throws {
+        let monitor = OpenCodeMonitor()
+        var published: [OpenCodeActivity] = []
+        monitor.onActivity = { published.append($0) }
+
+        monitor.handleEvent([
+            "type": "session.created",
+            "properties": ["info": ["id": "session-live", "title": "Live chat", "directory": "/tmp"]]
+        ])
+        let previous = try XCTUnwrap(published.last)
+        let previousToken = previous.conversationScrollToken(showWorkActivity: false)
+        let previousCount = published.count
+
+        monitor.handleEvent([
+            "type": "session.next.text.delta",
+            "properties": [
+                "sessionID": "session-live",
+                "assistantMessageID": "message-live",
+                "delta": "hello"
+            ]
+        ])
+
+        let updated = try XCTUnwrap(published.last)
+        XCTAssertGreaterThan(published.count, previousCount)
+        XCTAssertEqual(updated.messages.last?.text, "hello")
+        XCTAssertNotEqual(
+            updated.conversationScrollToken(showWorkActivity: false),
+            previousToken
+        )
+    }
 }

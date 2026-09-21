@@ -261,4 +261,31 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertGreaterThan(HaloCenter.rank(of: codex), HaloCenter.rank(of: weather))
         XCTAssertLessThan(HaloCenter.rank(of: codex), HaloCenter.rank(of: notification))
     }
+
+    func testLiveAgentDeltaPublishesUpdatedActivity() throws {
+        let monitor = CodexMonitor()
+        var published: [CodexActivity] = []
+        monitor.onActivity = { published.append($0) }
+
+        monitor.handleNotification(
+            method: "thread/started",
+            params: ["thread": ["id": "thread-live", "name": "Live chat"]]
+        )
+        let previous = try XCTUnwrap(published.last)
+        let previousToken = previous.conversationScrollToken(showWorkActivity: false)
+        let previousCount = published.count
+
+        monitor.handleNotification(
+            method: "item/agentMessage/delta",
+            params: ["threadId": "thread-live", "itemId": "item-live", "delta": "hello"]
+        )
+
+        let updated = try XCTUnwrap(published.last)
+        XCTAssertGreaterThan(published.count, previousCount)
+        XCTAssertEqual(updated.messages.last?.text, "hello")
+        XCTAssertNotEqual(
+            updated.conversationScrollToken(showWorkActivity: false),
+            previousToken
+        )
+    }
 }
