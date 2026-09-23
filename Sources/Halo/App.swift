@@ -155,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No menu-bar icon: the halo is the entire UI. All actions live on
         // its right-click menu instead.
         haloController.actions = HaloActions(
+            showDestination: { [weak self] destination in self?.showDestination(destination) },
             showNowPlaying: { [weak self] in self?.showNowPlaying() },
             showCharging: { [weak self] in self?.showCharging() },
             showNotification: { [weak self] in self?.showNotification() },
@@ -698,6 +699,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Routes the expanded app bar through the same explicit-selection paths
+    /// as the context menu. Each destination therefore gets the existing
+    /// manual override behavior instead of inventing a second routing layer.
+    private func showDestination(_ destination: HaloDestination) {
+        switch destination {
+        case .nowPlaying: showNowPlaying()
+        case .calendar: showCalendar()
+        case .codex: showCodex()
+        case .openCode: showOpenCode()
+        case .claudeCode: showClaudeCode()
+        }
+    }
+
     /// Show the live battery state from IOKit — plugged in or on battery.
     @objc private func showCharging() {
         guard settings.showBattery else { return }
@@ -728,7 +742,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showCalendar() {
         guard settings.showCalendarEvents || settings.showReminders else { return }
         calendarMonitor.refresh()
-        guard let current = calendarMonitor.current else { return }
+        // EventKit refreshes Reminders asynchronously, and an empty calendar
+        // legitimately has no current activity. Open the screen immediately;
+        // CalendarExpandedView already renders the empty state and the monitor
+        // will replace it when fresh data arrives.
+        let current = calendarMonitor.current ?? CalendarActivity(items: [])
         haloController.show(.calendar(current), autoDismissAfter: nil, intent: .expand(.user))
     }
 

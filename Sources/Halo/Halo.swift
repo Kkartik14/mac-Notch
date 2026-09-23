@@ -17,7 +17,7 @@ private let haloWindowSize = CGSize(width: 660, height: 210)
 /// Container sizes for content inside the fixed window.
 private let haloOpenSize = CGSize(width: 640, height: 190)
 private let haloClosedFallbackWidth: CGFloat = 185
-private let haloClosedHeight: CGFloat = 32
+let haloClosedHeight: CGFloat = 32
 private let haloRadiiOpen = (top: CGFloat(19), bottom: CGFloat(24))
 private let haloRadiiClosed = (top: CGFloat(6), bottom: CGFloat(14))
 
@@ -809,6 +809,7 @@ final class HaloWindowController: NSObject {
 /// Actions reachable from the halo's right-click menu.
 /// Wired by the app delegate; default no-ops keep previews/tests safe.
 struct HaloActions {
+    var showDestination: (HaloDestination) -> Void = { _ in }
     var showNowPlaying: () -> Void = {}
     var showCharging: () -> Void = {}
     var showNotification: () -> Void = {}
@@ -891,7 +892,11 @@ struct HaloView: View {
                     radius: 6, x: 0, y: 0)
             // Inner breathing room when open, edge-to-edge when closed.
             .padding(.horizontal, isOpen ? 0 : 0)
-            .padding([.horizontal, .bottom], isOpen ? 12 : 0)
+            // The shared expanded surface owns its own bottom edge. Keeping
+            // an additional outer bottom inset leaves an empty strip below
+            // the destination bar.
+            .padding(.horizontal, isOpen ? 12 : 0)
+            .padding(.bottom, isOpen ? 2 : 0)
             .background(Color.black)
             .clipShape(HaloSurfaceShape(topRadius: backdropTop, bottomRadius: backdropBottom))
             .shadow(color: isOpen ? .black.opacity(0.7) : .clear, radius: 6)
@@ -1167,17 +1172,14 @@ struct HaloView: View {
     // MARK: Expanded
 
     private func expandedContent(for activity: HaloActivity) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header(for: activity)
-                .frame(height: max(24, haloClosedHeight))
-            content(for: activity)
-                .padding(.top, 10)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        HaloExpandedSurface(
+            destinations: HaloDestination.available(in: settings),
+            selectedID: HaloDestination(rawValue: activity.id)?.id,
+            activities: center.activities,
+            onSelectDestination: { actions.showDestination($0) },
+            header: { header(for: activity) },
+            content: { content(for: activity) }
+        )
     }
 
     private func header(for activity: HaloActivity) -> some View {
