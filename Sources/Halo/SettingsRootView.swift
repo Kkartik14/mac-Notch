@@ -350,7 +350,7 @@ struct SettingsRootView: View {
                     sectionTitle("Activity sources")
                     divider().padding(.vertical, 8)
                     settingToggle("Now Playing", description: "Music, Spotify, and system media state.", isOn: $settings.showNowPlaying)
-                    settingToggle("Battery", description: "Charging state and current battery level.", isOn: $settings.showBattery)
+                    settingToggle("Battery", description: "Percentage, charging state, Low Power Mode, battery health, time remaining, and charging alerts.", isOn: $settings.showBattery)
                     settingToggle("Notifications", description: "New notifications when Full Disk Access allows it.", isOn: $settings.showNotifications)
                     settingToggle("Weather", description: "Current conditions from your approximate location.", isOn: $settings.showWeather)
                     settingToggle("Focus", description: "The active Focus mode when its local state is readable.", isOn: $settings.showFocus)

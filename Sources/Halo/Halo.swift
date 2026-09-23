@@ -97,6 +97,24 @@ struct ChargingActivity: Equatable {
     var level: Double
     var isPluggedIn: Bool
     var timeRemainingText: String?
+    /// Optional keeps older previews/tests source-compatible while real
+    /// monitor snapshots always provide the exact charging state.
+    var isCharging: Bool? = nil
+    var isFullyCharged: Bool = false
+    var isLowPowerMode: Bool = false
+    var healthPercent: Int? = nil
+    var cycleCount: Int? = nil
+
+    var activelyCharging: Bool {
+        isCharging ?? (isPluggedIn && !isFullyCharged)
+    }
+
+    var statusText: String {
+        if isFullyCharged { return "Fully charged" }
+        if activelyCharging { return "Charging now" }
+        if isPluggedIn { return "Power connected" }
+        return "On battery"
+    }
 }
 
 struct NotificationActivity: Equatable {
@@ -1075,10 +1093,10 @@ struct HaloView: View {
             } else {
                 inlineDot(for: activity)
             }
-        case .charging(let c) where c.isPluggedIn:
-            Image(systemName: "bolt.fill")
+        case .charging(let c):
+            Image(systemName: c.activelyCharging ? "bolt.fill" : (c.isLowPowerMode ? "battery.25percent" : "battery.100percent"))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.green)
+                .foregroundColor(c.isLowPowerMode ? .orange : (c.activelyCharging ? .green : .white.opacity(0.8)))
                 .frame(width: 20, height: 20)
         case .focus(let f):
             focusGlyph(for: f, size: 20)
@@ -1343,7 +1361,11 @@ struct HaloView: View {
     private func iconSpec(for activity: HaloActivity) -> (String, Color) {
         switch activity {
         case .nowPlaying: return ("music.note", .pink)
-        case .charging: return ("bolt.fill", .green)
+        case .charging(let c):
+            return (
+                c.activelyCharging ? "bolt.fill" : (c.isLowPowerMode ? "battery.25percent" : "battery.100percent"),
+                c.isLowPowerMode ? .orange : (c.activelyCharging ? .green : .white)
+            )
         case .notification: return ("message.fill", .purple)
         case .focus(let f): return (FocusMonitor.isSFSymbol(f.symbol) ? f.symbol : "moon.fill", .indigo)
         case .weather(let w): return (w.symbol, .blue)
@@ -1372,7 +1394,7 @@ struct HaloView: View {
     private func text(for activity: HaloActivity, expanded: Bool, size: CGFloat) -> some View {
         switch activity {
         case .nowPlaying(let n): Text(n.title).font(.system(size: size, weight: .semibold))
-        case .charging(let c): Text(expanded ? "Charging" : "\(Int((c.level * 100).rounded()))%").font(.system(size: size, weight: .semibold))
+        case .charging(let c): Text(expanded ? "Battery" : "\(Int((c.level * 100).rounded()))%").font(.system(size: size, weight: .semibold))
         case .notification(let n): Text(n.sender).font(.system(size: size, weight: .semibold))
         case .focus(let f): Text(f.mode).font(.system(size: size, weight: .semibold))
         case .weather(let w): Text(w.condition).font(.system(size: size, weight: .semibold))
@@ -1708,25 +1730,62 @@ struct ChargingExpandedView: View {
     let activity: ChargingActivity
 
     var body: some View {
-        HStack(spacing: 18) {
-            BatteryRing(level: activity.level, isCharging: activity.isPluggedIn)
-                .frame(width: 64, height: 64)
+        HStack(spacing: 16) {
+            BatteryRing(
+                level: activity.level,
+                isCharging: activity.activelyCharging,
+                isFullyCharged: activity.isFullyCharged,
+                isLowPowerMode: activity.isLowPowerMode
+            )
+            .frame(width: 64, height: 64)
+
             VStack(alignment: .leading, spacing: 4) {
-                Text("\(Int(activity.level * 100))%")
+                Text("\(Int((activity.level * 100).rounded()))%")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .monospacedDigit()
-                Text(activity.isPluggedIn ? "Charging now" : "On battery")
+                Text(activity.statusText)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
-                if activity.isPluggedIn, let eta = activity.timeRemainingText {
+                    .foregroundColor(activity.isLowPowerMode ? .orange : .white.opacity(0.7))
+                if let eta = activity.timeRemainingText {
                     Text(eta)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.white.opacity(0.5))
                 }
             }
-            Spacer(minLength: 0)
+
+            Spacer(minLength: 12)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                if activity.isLowPowerMode {
+                    BatteryDetailBadge(title: "Low Power", color: .orange)
+                }
+                if let health = activity.healthPercent {
+                    BatteryDetailBadge(title: "Health \(health)%", color: .green)
+                }
+                if let cycleCount = activity.cycleCount {
+                    Text("\(cycleCount) cycles")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.white.opacity(0.45))
+                        .monospacedDigit()
+                }
+            }
         }
+        .padding(.horizontal, 4)
+    }
+}
+
+private struct BatteryDetailBadge: View {
+    let title: String
+    let color: Color
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(color.opacity(0.14)))
     }
 }
 
@@ -2212,6 +2271,8 @@ struct PressableButtonStyle: ButtonStyle {
 struct BatteryRing: View {
     let level: Double
     let isCharging: Bool
+    var isFullyCharged: Bool = false
+    var isLowPowerMode: Bool = false
 
     var body: some View {
         ZStack {
@@ -2220,7 +2281,8 @@ struct BatteryRing: View {
             Circle()
                 .trim(from: 0, to: max(0.02, level))
                 .stroke(
-                    LinearGradient(colors: isCharging ? [.green, .mint] : [.green, .yellow],
+                    LinearGradient(
+                        colors: isLowPowerMode ? [.orange, .yellow] : (isCharging ? [.green, .mint] : [.green, .yellow]),
                                    startPoint: .top, endPoint: .bottom),
                     style: StrokeStyle(lineWidth: 6, lineCap: .round)
                 )
@@ -2230,10 +2292,18 @@ struct BatteryRing: View {
                 Text("\(Int(level * 100))%")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
-                if isCharging {
+                if isFullyCharged {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.green)
+                } else if isCharging {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.green)
+                } else if isLowPowerMode {
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange)
                 }
             }
         }

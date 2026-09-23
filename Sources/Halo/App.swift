@@ -30,7 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsWindowController = HaloSettingsWindowController()
     private let settings = HaloSettings.shared
     private var settingsObservation: AnyCancellable?
-    private var wasPluggedIn = false
+    private var lastBatteryCharge: BatteryMonitor.Charge?
+    private var batteryNotificationGeneration: UInt64 = 0
     private var codexWasWaiting = false
     private var codexRequested = false
     private var openCodeWasWaiting = false
@@ -217,7 +218,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         if !settings.showNowPlaying { haloController.center.dismiss("nowPlaying") }
-        if !settings.showBattery { haloController.center.dismiss("charging") }
+        if !settings.showBattery {
+            haloController.center.dismiss("charging")
+        } else {
+            // Re-surface the current snapshot when the user turns the source
+            // back on; a quiet refresh will not otherwise emit a callback.
+            batteryMonitor.refresh(forcePublish: true)
+        }
         if !settings.showNotifications { haloController.center.dismiss("notification") }
         if !settings.showWeather { haloController.center.dismiss("weather") }
         if !settings.showFocus { haloController.center.dismiss("focus") }
@@ -443,41 +450,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         spotifyMonitor.start()
 
-        // Battery — fresh plug jumps to the top for 2s (card pops, then
-        // priority order returns), unplug clears it. Level changes while
-        // plugged update quietly in rank position.
+        // Battery — keep one live activity for both AC and battery power.
+        // Power-state transitions briefly move it to the top so charging,
+        // unplugging, full charge, and Low Power Mode are visible events.
         batteryMonitor.start { [weak self] charge in
             guard let self else { return }
+            let previous = self.lastBatteryCharge
+            self.lastBatteryCharge = charge
             guard self.settings.showBattery else {
-                self.wasPluggedIn = charge.pluggedIn
                 self.haloController.center.dismiss("charging")
                 return
             }
+
             self.haloController.center.updateBatteryLevel(charge.level)
-            if charge.pluggedIn {
-                let isNewPlug = !self.wasPluggedIn
-                self.wasPluggedIn = true
-                self.haloController.show(
-                    .charging(ChargingActivity(
-                        level: charge.level,
-                        isPluggedIn: true,
-                        timeRemainingText: BatteryMonitor.etaText(minutes: charge.minutesRemaining)
-                    )),
-                    autoDismissAfter: nil,
-                    intent: isNewPlug && self.settings.automaticallyExpandActivities
-                        ? .expand(.automatic)
-                        : .update,
-                    collapseAfter: isNewPlug ? 2 : nil
-                )
-                if isNewPlug {
-                    self.haloController.center.moveToTop("charging")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                        self?.haloController.center.applyPriorityOrder()
-                    }
+
+            let powerStateChanged: Bool = {
+                guard let previous else { return false }
+                return previous.pluggedIn != charge.pluggedIn
+                    || previous.isCharging != charge.isCharging
+                    || previous.isFullyCharged != charge.isFullyCharged
+                    || previous.isLowPowerMode != charge.isLowPowerMode
+            }()
+            let shouldExpand = powerStateChanged && self.settings.automaticallyExpandActivities
+
+            self.haloController.show(
+                .charging(self.batteryActivity(for: charge)),
+                autoDismissAfter: nil,
+                intent: shouldExpand ? .expand(.automatic) : .update,
+                collapseAfter: shouldExpand ? 2 : nil
+            )
+
+            if powerStateChanged {
+                self.haloController.center.moveToTop("charging")
+                self.batteryNotificationGeneration &+= 1
+                let generation = self.batteryNotificationGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard let self, self.batteryNotificationGeneration == generation else { return }
+                    self.haloController.center.applyPriorityOrder()
                 }
-            } else {
-                self.wasPluggedIn = false
-                self.haloController.center.dismiss("charging")
             }
         }
 
@@ -717,11 +727,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard settings.showBattery else { return }
         batteryMonitor.refresh() // synchronous: `current` is fresh on return
         guard let cur = batteryMonitor.current else { return }
-        haloController.show(.charging(ChargingActivity(
-            level: cur.level,
-            isPluggedIn: cur.pluggedIn,
-            timeRemainingText: BatteryMonitor.etaText(minutes: cur.minutesRemaining)
-        )), autoDismissAfter: nil, intent: .expand(.user))
+        haloController.show(.charging(batteryActivity(for: cur)), autoDismissAfter: nil, intent: .expand(.user))
+    }
+
+    private func batteryActivity(for charge: BatteryMonitor.Charge) -> ChargingActivity {
+        ChargingActivity(
+            level: charge.level,
+            isPluggedIn: charge.pluggedIn,
+            timeRemainingText: BatteryMonitor.timeRemainingText(
+                minutes: charge.minutesRemaining,
+                isCharging: charge.isCharging,
+                isFullyCharged: charge.isFullyCharged
+            ),
+            isCharging: charge.isCharging,
+            isFullyCharged: charge.isFullyCharged,
+            isLowPowerMode: charge.isLowPowerMode,
+            healthPercent: charge.healthPercent,
+            cycleCount: charge.cycleCount
+        )
     }
 
     @objc private func showWeather() {
@@ -799,11 +822,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "charging":
             batteryMonitor.refresh()
             let c = batteryMonitor.current
-            haloController.show(.charging(ChargingActivity(
-                level: c?.level ?? 0.34,
-                isPluggedIn: c?.pluggedIn ?? true,
-                timeRemainingText: BatteryMonitor.etaText(minutes: c?.minutesRemaining ?? 40)
-            )), autoDismissAfter: nil, intent: .update)
+            let preview = c.map(batteryActivity(for:)) ?? ChargingActivity(
+                level: 0.34,
+                isPluggedIn: true,
+                timeRemainingText: BatteryMonitor.timeRemainingText(
+                    minutes: 40,
+                    isCharging: true
+                ),
+                isCharging: true
+            )
+            haloController.show(.charging(preview), autoDismissAfter: nil, intent: .update)
         case "weather":
             let w = weatherMonitor.current ?? WeatherActivity(temperatureC: 30, condition: "Overcast", symbol: "cloud.fill", windKph: 12, highC: 31, lowC: 24, isDay: true)
             haloController.show(.weather(w), autoDismissAfter: nil, intent: .update)

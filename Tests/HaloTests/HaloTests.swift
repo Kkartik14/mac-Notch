@@ -247,6 +247,27 @@ final class BatteryTests: XCTestCase {
         XCTAssertEqual(BatteryMonitor.etaText(minutes: 84), "~1h 24m until full")
     }
 
+    func testTimeRemainingUsesTheCurrentPowerDirection() {
+        XCTAssertEqual(
+            BatteryMonitor.timeRemainingText(minutes: 84, isCharging: true),
+            "~1h 24m until full"
+        )
+        XCTAssertEqual(
+            BatteryMonitor.timeRemainingText(minutes: 84, isCharging: false),
+            "~1h 24m remaining"
+        )
+        XCTAssertNil(
+            BatteryMonitor.timeRemainingText(minutes: 84, isCharging: true, isFullyCharged: true)
+        )
+    }
+
+    func testHealthPercentIsDerivedFromFullAndDesignCapacity() {
+        XCTAssertEqual(BatteryMonitor.healthPercent(maxCapacity: 4_700, designCapacity: 5_000), 94)
+        XCTAssertEqual(BatteryMonitor.healthPercent(maxCapacity: 5_200, designCapacity: 5_000), 100)
+        XCTAssertNil(BatteryMonitor.healthPercent(maxCapacity: 4_700, designCapacity: nil))
+        XCTAssertNil(BatteryMonitor.healthPercent(maxCapacity: 4_700, designCapacity: 0))
+    }
+
     func testLiveReadingIsSane() {
         let m = BatteryMonitor()
         let exp = expectation(description: "reading")
