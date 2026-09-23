@@ -74,20 +74,8 @@ struct HaloDestinationBar: View {
         self.onSelect = onSelect
     }
 
-    private var systemDestinations: [HaloDestination] {
-        destinations.filter { !$0.isDeveloperTool }
-    }
-
-    private var developerDestinations: [HaloDestination] {
-        destinations.filter(\.isDeveloperTool)
-    }
-
     var body: some View {
-        VStack(spacing: 1) {
-            Rectangle()
-                .fill(Color.white.opacity(0.1))
-                .frame(height: 1)
-
+        VStack(spacing: 0) {
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
 
@@ -95,16 +83,7 @@ struct HaloDestinationBar: View {
                 // flexible space on both sides makes centering independent
                 // of the selected destination or provider mark.
                 HStack(spacing: 2) {
-                    destinationButtons(systemDestinations)
-
-                    if !systemDestinations.isEmpty && !developerDestinations.isEmpty {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.14))
-                            .frame(width: 1, height: 12)
-                            .padding(.horizontal, 2)
-                    }
-
-                    destinationButtons(developerDestinations)
+                    destinationButtons(destinations)
                 }
                 .fixedSize(horizontal: true, vertical: true)
 
@@ -190,9 +169,9 @@ private struct HaloDestinationGlyph: View {
         Group {
             switch destination {
             case .nowPlaying:
-                Image(systemName: "music.note")
+                HaloAppleAppIconView(application: .music, size: size)
             case .calendar:
-                Image(systemName: "calendar")
+                HaloAppleAppIconView(application: .calendar, size: size)
             case .codex:
                 OpenAIMarkView(size: size)
             case .openCode:

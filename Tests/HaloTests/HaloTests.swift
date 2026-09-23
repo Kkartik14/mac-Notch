@@ -297,6 +297,35 @@ final class PriorityTests: XCTestCase {
         XCTAssertEqual(c.activities.map(\.id), ["weather", "charging", "calendar", "nowPlaying"])
     }
 
+    func testExplicitCalendarSelectionSurvivesAFullActivityStack() {
+        let c = HaloCenter()
+        c.present(.codex(CodexActivity(
+            chats: [], selectedChatID: nil, messages: [], connection: .connected,
+            pendingApproval: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        c.present(.openCode(OpenCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            pendingPermission: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        c.present(.claudeCode(ClaudeCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        c.present(.nowPlaying(NowPlayingActivity(
+            title: "Track", artist: "Artist", isPlaying: false
+        )), autoDismissAfter: nil, intent: .update)
+
+        c.present(
+            .calendar(CalendarActivity(items: [])),
+            autoDismissAfter: nil,
+            intent: .expand(.user)
+        )
+
+        XCTAssertEqual(c.activities.count, 4)
+        XCTAssertTrue(c.activities.contains { $0.id == "calendar" })
+        XCTAssertEqual(c.expandedId, "calendar")
+    }
+
     func testPlugOverrideAndReturn() {
         let c = HaloCenter()
         c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: false)

@@ -248,7 +248,35 @@ final class HaloCenter: ObservableObject {
             // Ordered insert: higher rank sits closer to the top (end).
             let pos = activities.firstIndex { Self.rank(of: $0) > Self.rank(of: activity) } ?? activities.endIndex
             activities.insert(activity, at: pos)
-            if activities.count > 4 { activities.removeFirst(activities.count - 4) }
+            if activities.count > 4 {
+                let isExplicitSelection: Bool = {
+                    if case .expand(.user) = intent { return true }
+                    return false
+                }()
+
+                if isExplicitSelection {
+                    // A user-selected destination must survive the activity
+                    // cap. Prefer evicting the lowest-ranked non-selected
+                    // activity, while leaving the current manual surface
+                    // available until the new selection takes over.
+                    let protectedIDs = Set([expandedId, manualOverrideID].compactMap { $0 })
+                    let candidates = activities.indices.filter { index in
+                        let id = activities[index].id
+                        return id != activity.id && !protectedIDs.contains(id)
+                    }
+                    let fallback = activities.indices.filter { activities[$0].id != activity.id }
+                    let pool = candidates.isEmpty ? fallback : candidates
+                    if let removalIndex = pool.min(by: { lhs, rhs in
+                        let leftRank = Self.rank(of: activities[lhs])
+                        let rightRank = Self.rank(of: activities[rhs])
+                        return leftRank == rightRank ? lhs < rhs : leftRank < rightRank
+                    }) {
+                        activities.remove(at: removalIndex)
+                    }
+                } else {
+                    activities.removeFirst(activities.count - 4)
+                }
+            }
             guard let inserted = activities.firstIndex(where: { $0.id == activity.id }) else { return }
             idx = inserted
         }
@@ -1293,6 +1321,8 @@ struct HaloView: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
+        } else if case .calendar = activity {
+            HaloAppleAppIconView(application: .calendar, size: size)
         } else if case .codex = activity {
             OpenAIMarkView(size: size)
         } else if case .openCode = activity {
