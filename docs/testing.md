@@ -56,6 +56,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 - Calendar/Reminders filtering, ordering, in-progress event retention, overdue-reminder persistence, relative time labels, start-boundary detection, rail limits, exact native item URLs, Maps links, web-link filtering, and event duration ranges.
 - UserDefaults-backed preference restoration and persistence of the automatic permission-request ledger.
 - Shared scroll-rail geometry: row spacing, viewport clamping, empty input, invalid dimensions, and the overflow threshold.
+- Shared presentation policy: explicit user expansion/manual override ownership across collapse, selected-pill routing, normal pointer-exit collapse, pill-tap ownership, hover ownership, automatic alert ownership, and protection against passive updates hijacking the expanded card.
+- Codex app-server parsing and display contracts: approval/waiting state, compact labels, thread metadata, optional WORK activity filtering and status details, private-reasoning omission, and Codex activity priority.
+- OpenCode HTTP/SSE parsing and display contracts: session metadata and ordering, millisecond timestamps, message/tool parsing, private-reasoning omission, direct/global SSE payloads, streamed output tokens, permission request bodies, and optional WORK activity filtering.
+- Live provider event-to-activity propagation for Codex, OpenCode, and Claude Code, including updated conversation scroll tokens.
+- Coalesced same-session history refreshes: overlapping Codex/OpenCode requests collapse into one follow-up request rather than losing the newest update.
+- Claude Code CLI contracts: structured stream command arguments, resume/new-session routing, transcript session metadata, conversation/tool parsing, private-thinking omission, permission-denial extraction, and optional WORK activity filtering. A temporary transcript fixture verifies FSEvents refreshes messages and tracks external session creation/removal without polling.
+- Shared assistant Markdown rendering: strong/emphasized/code/strikethrough spans, clickable link destinations, and whitespace preservation.
 - Music scripting queue payload parsing.
 - Playback progress and recent-track attachment behavior.
 - Gzip decoding, protobuf title/artist parsing, archive parsing, JSON extraction, and artwork URL normalization.
@@ -77,6 +84,9 @@ The archive, queue, priority, positioning, and parser tests use synthetic or pur
 - End-to-end AppleScript tests against Music and Spotify.
 - Live Open-Meteo, iTunes Lookup, Spotify artwork, or CDN tests.
 - Full Disk Access success/failure integration tests.
+- Live `codex app-server` turns, approvals, and Codex CLI authentication/configuration.
+- Live OpenCode server turns, permissions, and OpenCode provider authentication/configuration.
+- Live Claude Code turns, transcript writes, authentication, provider configuration, and permission behavior.
 - Multi-display, fullscreen, sleep/wake, and real hover hit-testing automation.
 
 Live integrations should be tested manually on a development Mac, because tests that control media players or depend on TCC state are difficult to make reliable in CI.
