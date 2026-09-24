@@ -5,6 +5,7 @@ import SwiftUI
 /// The content receives only the space above the fixed app bar, so provider
 /// screens cannot accidentally omit the bar or paint underneath it.
 struct HaloExpandedSurface<Header: View, Content: View>: View {
+    @ObservedObject private var settings = HaloSettings.shared
     let destinations: [HaloDestination]
     let selectedID: String?
     let activities: [HaloActivity]
@@ -33,7 +34,7 @@ struct HaloExpandedSurface<Header: View, Content: View>: View {
             let headerHeight = max(24, haloClosedHeight)
             let destinationBarHeight = destinations.isEmpty
                 ? 0
-                : HaloDestinationBarMetrics.height
+                : HaloDestinationBarMetrics.height(for: appBarScale)
             let contentHeight = max(0, proxy.size.height - headerHeight - destinationBarHeight)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -46,6 +47,10 @@ struct HaloExpandedSurface<Header: View, Content: View>: View {
                 // header and the fixed destination bar — rather than the
                 // entire expanded Halo surface.
                 content
+                    .environment(
+                        \.haloExpandedLayout,
+                        HaloExpandedLayout(size: CGSize(width: proxy.size.width, height: contentHeight))
+                    )
                     .frame(width: proxy.size.width, height: contentHeight, alignment: .center)
                     .clipped()
 
@@ -54,6 +59,7 @@ struct HaloExpandedSurface<Header: View, Content: View>: View {
                         destinations: destinations,
                         selectedID: selectedID,
                         activities: activities,
+                        scale: appBarScale,
                         onSelect: onSelectDestination
                     )
                     .frame(width: proxy.size.width, height: destinationBarHeight)
@@ -66,5 +72,9 @@ struct HaloExpandedSurface<Header: View, Content: View>: View {
         .padding(.bottom, 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
+    }
+
+    private var appBarScale: CGFloat {
+        HaloDestinationBarMetrics.normalizedScale(settings.appsBarScale)
     }
 }

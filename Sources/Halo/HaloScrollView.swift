@@ -48,6 +48,15 @@ enum HaloScrollMetrics {
     }
 }
 
+/// Stable index-backed identity for rails whose source models do not own an
+/// identity of their own (for example, duplicate music tracks in a queue).
+struct HaloIndexedItem<Value>: Identifiable {
+    let index: Int
+    let value: Value
+
+    var id: Int { index }
+}
+
 /// The standard vertical list container for Halo cards.
 ///
 /// Feature views provide the data and row content. This component owns the

@@ -9,13 +9,34 @@ private let haloOpenDamping: Double = 0.8
 private let haloCloseResponse = 0.45
 private let haloCloseDamping: Double = 1.0
 
-/// Fixed window geometry (Plan B): the window never resizes or moves after
-/// placement. 640 content + shadow room. All morphing is SwiftUI content
-/// inside stationary glass — slide and lag have no mechanism left.
-private let haloWindowSize = CGSize(width: 660, height: 210)
+/// Geometry policy for the configurable expanded surface. The transparent
+/// panel is larger than the default card so changing the user's size never
+/// requires resizing or repositioning the window.
+enum HaloNotchMetrics {
+    static let windowSize = CGSize(width: 820, height: 300)
+    static let defaultExpandedSize = CGSize(width: 640, height: 190)
+    static let minimumWidthScale: CGFloat = 0.85
+    static let maximumWidthScale: CGFloat = 1.25
+    static let minimumHeightScale: CGFloat = 0.80
+    static let maximumHeightScale: CGFloat = 1.35
 
-/// Container sizes for content inside the fixed window.
-private let haloOpenSize = CGSize(width: 640, height: 190)
+    static func normalizedWidthScale(_ value: Double) -> CGFloat {
+        min(max(CGFloat(value), minimumWidthScale), maximumWidthScale)
+    }
+
+    static func normalizedHeightScale(_ value: Double) -> CGFloat {
+        min(max(CGFloat(value), minimumHeightScale), maximumHeightScale)
+    }
+
+    static func expandedSize(widthScale: Double, heightScale: Double) -> CGSize {
+        CGSize(
+            width: defaultExpandedSize.width * normalizedWidthScale(widthScale),
+            height: defaultExpandedSize.height * normalizedHeightScale(heightScale)
+        )
+    }
+}
+
+private let haloWindowSize = HaloNotchMetrics.windowSize
 private let haloClosedFallbackWidth: CGFloat = 185
 let haloClosedHeight: CGFloat = 32
 private let haloRadiiOpen = (top: CGFloat(19), bottom: CGFloat(24))
@@ -618,8 +639,12 @@ final class HaloWindowController: NSObject {
             return false
         }()
         let closedW = haloClosedWidth()
-        let w: CGFloat = isOpen ? haloOpenSize.width : (center.activities.isEmpty ? closedW : closedW + 60)
-        let h: CGFloat = isOpen ? haloOpenSize.height : haloClosedHeight
+        let expandedSize = HaloNotchMetrics.expandedSize(
+            widthScale: HaloSettings.shared.notchWidthScale,
+            heightScale: HaloSettings.shared.notchHeightScale
+        )
+        let w: CGFloat = isOpen ? expandedSize.width : (center.activities.isEmpty ? closedW : closedW + 60)
+        let h: CGFloat = isOpen ? expandedSize.height : haloClosedHeight
         // Content is top-center anchored in the fixed window.
         let x = f.midX - w / 2
         let y = f.maxY - h
@@ -887,8 +912,14 @@ struct HaloView: View {
     // Closed hugs the camera housing (~185pt on 14-inch displays); open is wide.
     private var topSurfacePillWidth: CGFloat { haloClosedWidth() }
     private let topSurfacePillHeight: CGFloat = 32
-    private var expandedWidth: CGFloat { haloOpenSize.width }
-    private var expandedHeight: CGFloat { haloOpenSize.height }
+    private var expandedSize: CGSize {
+        HaloNotchMetrics.expandedSize(
+            widthScale: settings.notchWidthScale,
+            heightScale: settings.notchHeightScale
+        )
+    }
+    private var expandedWidth: CGFloat { expandedSize.width }
+    private var expandedHeight: CGFloat { expandedSize.height }
 
     private var isOpen: Bool {
         if let id = center.expandedId, center.activities.contains(where: { $0.id == id }) { return true }
@@ -984,6 +1015,8 @@ struct HaloView: View {
         // Bouncy open, critically damped close.
         .animation(motionReduced ? nil : morphSpring, value: center.expandedId)
         .animation(motionReduced ? nil : .smooth, value: center.activities.count)
+        .animation(motionReduced ? nil : morphSpring, value: settings.notchWidthScale)
+        .animation(motionReduced ? nil : morphSpring, value: settings.notchHeightScale)
     }
 
     private var preferredWidth: CGFloat {
@@ -1424,6 +1457,7 @@ struct NowPlayingExpandedView: View {
     var onReplay: (PlaybackHistoryMonitor.Track) -> Void = { _ in }
     @State private var dragFraction: Double?
     @ObservedObject private var settings = HaloSettings.shared
+    @Environment(\.haloExpandedLayout) private var layout
 
     /// Elapsed shown while dragging (instant feedback), else live value.
     private var shownElapsed: TimeInterval {
@@ -1439,7 +1473,7 @@ struct NowPlayingExpandedView: View {
         HStack(alignment: .center, spacing: 14) {
             if settings.showArtwork {
                 artwork
-                    .frame(width: 90, height: 90)
+                    .frame(width: layout.playerArtworkSize, height: layout.playerArtworkSize)
                     .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -1488,9 +1522,9 @@ struct NowPlayingExpandedView: View {
                 .padding(.top, 2)
             }
             if settings.showUpNext && !activity.upNext.isEmpty {
-                upNextRail
+                upNextRail(width: layout.playerRailWidth)
             } else if settings.showRecentlyPlayed && !activity.recent.isEmpty {
-                recentRail
+                recentRail(width: layout.playerRailWidth)
             } else {
                 Spacer(minLength: 0)
             }
@@ -1499,7 +1533,7 @@ struct NowPlayingExpandedView: View {
 
     /// Up Next rail tile: real thumbnail when downloaded, dark note tile
     /// while the playlist artwork read is pending or unavailable.
-    private func upNextTile(for item: UpNextItem) -> some View {
+    private func upNextTile(for item: UpNextItem, size: CGFloat) -> some View {
         Group {
             if let data = item.artData, let img = NSImage(data: data) {
                 Image(nsImage: img)
@@ -1515,15 +1549,16 @@ struct NowPlayingExpandedView: View {
                     )
             }
         }
-        .frame(width: 36, height: 36)
+        .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
-    private var upNextRail: some View {
+    private func upNextRail(width: CGFloat) -> some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
             Rectangle()
                 .fill(Color.white.opacity(0.12))
                 .frame(width: 1)
+                .frame(maxHeight: .infinity)
                 .padding(.vertical, 4)
             VStack(alignment: .leading, spacing: 0) {
                 Text("UP NEXT")
@@ -1531,42 +1566,49 @@ struct NowPlayingExpandedView: View {
                     .tracking(1.5)
                     .foregroundColor(.white.opacity(0.5))
                     .padding(.bottom, 8)
-                ForEach(Array(activity.upNext.prefix(3).enumerated()), id: \.offset) { _, item in
+                HaloScrollView(
+                    items: activity.upNext.enumerated().map {
+                        HaloIndexedItem(index: $0.offset, value: $0.element)
+                    },
+                    maximumHeight: playerRailListHeight,
+                    rowSpacing: layout.playerRailRowSpacing
+                ) { row in
                     HStack(spacing: 8) {
-                        upNextTile(for: item)
+                        upNextTile(for: row.value, size: layout.playerRailArtworkSize)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(item.title)
+                            Text(row.value.title)
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
-                            Text(item.artist)
+                            Text(row.value.artist)
                                 .font(.system(size: 11, weight: .regular))
                                 .foregroundColor(.white.opacity(0.55))
                                 .lineLimit(1)
                         }
                     }
-                    .padding(.bottom, 8)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        NSLog("[Halo] ui: queue tap %@", item.title)
-                        onPlayQueued(item)
+                        NSLog("[Halo] ui: queue tap %@", row.value.title)
+                        onPlayQueued(row.value)
                     }
                 }
-                Spacer(minLength: 0)
+                .frame(maxHeight: .infinity, alignment: .top)
             }
-            .frame(width: 200, alignment: .leading)
+            .frame(width: width, height: layout.playerRailViewportHeight, alignment: .topLeading)
             .padding(.leading, 14)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     /// Fallback rail when the queue is hidden (catalog/autoplay playback):
     /// recent plays from Music's session archives, tap to replay.
-    private var recentRail: some View {
+    private func recentRail(width: CGFloat) -> some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
             Rectangle()
                 .fill(Color.white.opacity(0.12))
                 .frame(width: 1)
+                .frame(maxHeight: .infinity)
                 .padding(.vertical, 4)
             VStack(alignment: .leading, spacing: 0) {
                 Text("PLAYED RECENTLY")
@@ -1574,49 +1616,59 @@ struct NowPlayingExpandedView: View {
                     .tracking(1.5)
                     .foregroundColor(.white.opacity(0.5))
                     .padding(.bottom, 8)
-                ForEach(Array(activity.recent.prefix(3).enumerated()), id: \.offset) { _, item in
-                    Button(action: { onReplay(item) }) {
+                HaloScrollView(
+                    items: activity.recent.enumerated().map {
+                        HaloIndexedItem(index: $0.offset, value: $0.element)
+                    },
+                    maximumHeight: playerRailListHeight,
+                    rowSpacing: layout.playerRailRowSpacing
+                ) { row in
+                    Button(action: { onReplay(row.value) }) {
                         HStack(alignment: .center, spacing: 8) {
-                            recentArtwork(for: item)
-                                .frame(width: 36, height: 36)
+                            recentArtwork(for: row.value, size: layout.playerRailArtworkSize)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(item.title)
+                                Text(row.value.title)
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(.white)
                                     .lineLimit(1)
                                     .multilineTextAlignment(.leading)
-                                Text(item.artist)
+                                Text(row.value.artist)
                                     .font(.system(size: 11, weight: .regular))
                                     .foregroundColor(.white.opacity(0.55))
                                     .lineLimit(1)
                                     .multilineTextAlignment(.leading)
                             }
                         }
-                        .padding(.bottom, 8)
                     }
                     .buttonStyle(.plain)
                 }
-                Spacer(minLength: 0)
+                .frame(maxHeight: .infinity, alignment: .top)
             }
-            .frame(width: 200, alignment: .leading)
+            .frame(width: width, height: layout.playerRailViewportHeight, alignment: .topLeading)
             .padding(.leading, 14)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    /// 36pt album art for a history row: CDN thumb when downloaded,
+    private var playerRailListHeight: CGFloat {
+        max(24, layout.playerRailViewportHeight - 26)
+    }
+
+    /// Responsive album art for a history row: CDN thumb when downloaded,
     /// soft gradient note placeholder while it loads / when absent.
     @ViewBuilder
-    private func recentArtwork(for item: PlaybackHistoryMonitor.Track) -> some View {
+    private func recentArtwork(for item: PlaybackHistoryMonitor.Track, size: CGFloat) -> some View {
         if let data = item.artworkData, let img = NSImage(data: data) {
             Image(nsImage: img)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: 36, height: 36)
+                .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         } else {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(LinearGradient(colors: [.gray.opacity(0.6), .gray.opacity(0.25)],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: size, height: size)
                 .overlay(
                     Image(systemName: "music.note")
                         .font(.system(size: 12, weight: .semibold))
@@ -1861,6 +1913,7 @@ struct FocusExpandedView: View {
 
 struct WeatherExpandedView: View {
     let activity: WeatherActivity
+    @Environment(\.haloExpandedLayout) private var layout
 
     var body: some View {
         HStack(spacing: 24) {
@@ -1890,9 +1943,9 @@ struct WeatherExpandedView: View {
             // Right: single monochrome glyph on a subtle well — fills the
             // wide card without the cheap blue-app-icon look.
             Image(systemName: activity.symbol)
-                .font(.system(size: 52, weight: .thin))
+                .font(.system(size: layout.weatherGlyphSize * 0.47, weight: .thin))
                 .foregroundColor(.white.opacity(0.92))
-                .frame(width: 110, height: 110)
+                .frame(width: layout.weatherGlyphSize, height: layout.weatherGlyphSize)
                 .background(Color.white.opacity(0.07))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(
@@ -1911,6 +1964,7 @@ struct CalendarExpandedView: View {
     var onOpenLocation: (String) -> Void = { _ in }
     var onOpenURL: (URL) -> Void = { _ in }
     @ObservedObject private var settings = HaloSettings.shared
+    @Environment(\.haloExpandedLayout) private var layout
 
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 60)) { context in
@@ -1930,7 +1984,7 @@ struct CalendarExpandedView: View {
                     .frame(width: 1)
 
                 nextItemColumn(next, now: now)
-                    .frame(width: 245, alignment: .topLeading)
+                    .frame(width: layout.calendarNextColumnWidth, alignment: .topLeading)
                     .frame(maxHeight: .infinity, alignment: .topLeading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1958,7 +2012,8 @@ struct CalendarExpandedView: View {
                     .frame(maxHeight: .infinity, alignment: .topLeading)
             } else {
                 HaloScrollView(
-                    items: CalendarMonitor.groupedByDate(upNextItems)
+                    items: CalendarMonitor.groupedByDate(upNextItems),
+                    maximumHeight: layout.railViewportHeight
                 ) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         if let label = CalendarMonitor.dateGroupLabel(for: group.date, relativeTo: now) {
@@ -1981,6 +2036,7 @@ struct CalendarExpandedView: View {
                 }
             }
         }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func nextItemColumn(_ item: CalendarItem, now: Date) -> some View {

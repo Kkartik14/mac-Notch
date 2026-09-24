@@ -14,13 +14,12 @@ struct OpenCodeExpandedView: View {
     var onResolvePermission: (OpenCodePermissionDecision) -> Void = { _ in }
 
     @State private var draft = ""
-
-    private let railWidth: CGFloat = 154
+    @Environment(\.haloExpandedLayout) private var layout
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            sessionRail
-                .frame(width: railWidth, alignment: .topLeading)
+            sessionRail(maximumHeight: layout.railViewportHeight)
+                .frame(width: layout.railWidth, alignment: .topLeading)
 
             Rectangle()
                 .fill(Color.white.opacity(0.12))
@@ -32,7 +31,7 @@ struct OpenCodeExpandedView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var sessionRail: some View {
+    private func sessionRail(maximumHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 sectionLabel("SESSIONS")
@@ -58,13 +57,14 @@ struct OpenCodeExpandedView: View {
             } else {
                 HaloScrollView(
                     items: activity.sessions,
-                    maximumHeight: 130,
+                    maximumHeight: maximumHeight,
                     rowSpacing: 4
                 ) { session in
                     sessionRow(session)
                 }
             }
         }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var conversation: some View {
@@ -120,7 +120,7 @@ struct OpenCodeExpandedView: View {
             } else {
                 HaloScrollView(
                     items: visibleMessages,
-                    maximumHeight: 82,
+                    maximumHeight: layout.messageViewportHeight(reservedHeight: conversationReservedHeight),
                     rowSpacing: 6,
                     scrollToBottomOnChange: true,
                     scrollTrigger: activity.conversationScrollToken(showWorkActivity: showWorkActivity)
@@ -135,6 +135,12 @@ struct OpenCodeExpandedView: View {
 
             composer
         }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var conversationReservedHeight: CGFloat {
+        (activity.errorMessage == nil ? 0 : 22)
+            + (activity.pendingPermission == nil ? 0 : 34)
     }
 
     private func sessionRow(_ session: OpenCodeSession) -> some View {

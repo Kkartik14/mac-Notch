@@ -8,6 +8,33 @@ enum HaloDestinationBarMetrics {
     static let buttonWidth: CGFloat = 22
     static let buttonHeight: CGFloat = 20
     static let glyphSize: CGFloat = 12
+    static let minimumScale: CGFloat = 0.75
+    static let maximumScale: CGFloat = 1.35
+    static let defaultScale: CGFloat = 1.0
+
+    static func normalizedScale(_ value: Double) -> CGFloat {
+        min(max(CGFloat(value), minimumScale), maximumScale)
+    }
+
+    static func height(for scale: CGFloat) -> CGFloat {
+        max(height, buttonHeight(for: scale) + 2)
+    }
+
+    static func buttonWidth(for scale: CGFloat) -> CGFloat {
+        buttonWidth * scale
+    }
+
+    static func buttonHeight(for scale: CGFloat) -> CGFloat {
+        buttonHeight * scale
+    }
+
+    static func glyphSize(for scale: CGFloat) -> CGFloat {
+        glyphSize * scale
+    }
+
+    static func spacing(for scale: CGFloat) -> CGFloat {
+        max(1, 2 * scale)
+    }
 }
 
 /// User-facing destinations that can be selected from the expanded Halo
@@ -46,11 +73,11 @@ enum HaloDestination: String, CaseIterable, Equatable, Identifiable {
 
     func isEnabled(in settings: HaloSettings) -> Bool {
         switch self {
-        case .nowPlaying: return settings.showNowPlaying
-        case .calendar: return settings.showCalendarEvents || settings.showReminders
-        case .codex: return settings.showCodex
-        case .openCode: return settings.showOpenCode
-        case .claudeCode: return settings.showClaudeCode
+        case .nowPlaying: return settings.showNowPlaying && settings.showMusicInAppsBar
+        case .calendar: return (settings.showCalendarEvents || settings.showReminders) && settings.showCalendarInAppsBar
+        case .codex: return settings.showCodex && settings.showCodexInAppsBar
+        case .openCode: return settings.showOpenCode && settings.showOpenCodeInAppsBar
+        case .claudeCode: return settings.showClaudeCode && settings.showClaudeCodeInAppsBar
         }
     }
 }
@@ -60,17 +87,20 @@ struct HaloDestinationBar: View {
     let destinations: [HaloDestination]
     let selectedID: String?
     let activities: [HaloActivity]
+    let scale: CGFloat
     let onSelect: (HaloDestination) -> Void
 
     init(
         destinations: [HaloDestination],
         selectedID: String?,
         activities: [HaloActivity],
+        scale: CGFloat = HaloDestinationBarMetrics.defaultScale,
         onSelect: @escaping (HaloDestination) -> Void
     ) {
         self.destinations = destinations
         self.selectedID = selectedID
         self.activities = activities
+        self.scale = min(max(scale, HaloDestinationBarMetrics.minimumScale), HaloDestinationBarMetrics.maximumScale)
         self.onSelect = onSelect
     }
 
@@ -82,7 +112,7 @@ struct HaloDestinationBar: View {
                 // Keep the complete destination group fixed-size. Equal
                 // flexible space on both sides makes centering independent
                 // of the selected destination or provider mark.
-                HStack(spacing: 2) {
+                HStack(spacing: HaloDestinationBarMetrics.spacing(for: scale)) {
                     destinationButtons(destinations)
                 }
                 .fixedSize(horizontal: true, vertical: true)
@@ -91,7 +121,7 @@ struct HaloDestinationBar: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .frame(height: HaloDestinationBarMetrics.height)
+        .frame(height: HaloDestinationBarMetrics.height(for: scale))
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Halo apps")
@@ -115,26 +145,26 @@ struct HaloDestinationBar: View {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(isSelected ? Color.white.opacity(0.14) : Color.clear)
                     .frame(
-                        width: HaloDestinationBarMetrics.buttonWidth,
-                        height: HaloDestinationBarMetrics.buttonHeight
+                        width: HaloDestinationBarMetrics.buttonWidth(for: scale),
+                        height: HaloDestinationBarMetrics.buttonHeight(for: scale)
                     )
 
                 HaloDestinationGlyph(
                     destination: destination,
                     activity: activity,
-                    size: HaloDestinationBarMetrics.glyphSize
+                    size: HaloDestinationBarMetrics.glyphSize(for: scale)
                 )
             }
             .frame(
-                width: HaloDestinationBarMetrics.buttonWidth,
-                height: HaloDestinationBarMetrics.buttonHeight
+                width: HaloDestinationBarMetrics.buttonWidth(for: scale),
+                height: HaloDestinationBarMetrics.buttonHeight(for: scale)
             )
             .fixedSize(horizontal: true, vertical: true)
             .clipped()
             .overlay(alignment: .bottomTrailing) {
-                if isStreaming(activity) {
-                    SessionActivityIndicator(isStreaming: true, diameter: 2.5)
-                        .padding(2)
+                    if isStreaming(activity) {
+                    SessionActivityIndicator(isStreaming: true, diameter: max(2, 2.5 * scale))
+                        .padding(max(1, 2 * scale))
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))

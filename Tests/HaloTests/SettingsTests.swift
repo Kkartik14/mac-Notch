@@ -17,6 +17,10 @@ final class HaloSettingsTests: XCTestCase {
         first.calendarLookaheadDays = 14
         first.calendarItemLimit = 40
         first.calendarShowDuration = false
+        first.showCodexInAppsBar = false
+        first.appsBarScale = 1.25
+        first.notchWidthScale = 1.15
+        first.notchHeightScale = 0.9
 
         let second = HaloSettings(defaults: defaults)
         XCTAssertFalse(second.automaticallyExpandActivities)
@@ -26,6 +30,10 @@ final class HaloSettingsTests: XCTestCase {
         XCTAssertEqual(second.calendarLookaheadDays, 14)
         XCTAssertEqual(second.calendarItemLimit, 40)
         XCTAssertFalse(second.calendarShowDuration)
+        XCTAssertFalse(second.showCodexInAppsBar)
+        XCTAssertEqual(second.appsBarScale, 1.25)
+        XCTAssertEqual(second.notchWidthScale, 1.15)
+        XCTAssertEqual(second.notchHeightScale, 0.9)
     }
 
     func testPermissionRequestLedgerPersistsAcrossInstances() {

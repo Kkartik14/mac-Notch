@@ -15,13 +15,12 @@ struct CodexExpandedView: View {
     var onResolveApproval: (CodexApprovalDecision) -> Void = { _ in }
 
     @State private var draft = ""
-
-    private let railWidth: CGFloat = 154
+    @Environment(\.haloExpandedLayout) private var layout
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            chatRail
-                .frame(width: railWidth, alignment: .topLeading)
+            chatRail(maximumHeight: layout.railViewportHeight)
+                .frame(width: layout.railWidth, alignment: .topLeading)
 
             Rectangle()
                 .fill(Color.white.opacity(0.12))
@@ -33,7 +32,7 @@ struct CodexExpandedView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var chatRail: some View {
+    private func chatRail(maximumHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 sectionLabel("CHATS")
@@ -59,13 +58,14 @@ struct CodexExpandedView: View {
             } else {
                 HaloScrollView(
                     items: activity.chats,
-                    maximumHeight: 130,
+                    maximumHeight: maximumHeight,
                     rowSpacing: 4
                 ) { chat in
                     chatRow(chat)
                 }
             }
         }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var conversation: some View {
@@ -121,7 +121,7 @@ struct CodexExpandedView: View {
             } else {
                 HaloScrollView(
                     items: visibleMessages,
-                    maximumHeight: 82,
+                    maximumHeight: layout.messageViewportHeight(reservedHeight: conversationReservedHeight),
                     rowSpacing: 6,
                     scrollToBottomOnChange: true,
                     scrollTrigger: activity.conversationScrollToken(showWorkActivity: showWorkActivity)
@@ -136,6 +136,12 @@ struct CodexExpandedView: View {
 
             composer
         }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var conversationReservedHeight: CGFloat {
+        (activity.errorMessage == nil ? 0 : 22)
+            + (activity.pendingApproval == nil ? 0 : 34)
     }
 
     private func chatRow(_ chat: CodexChat) -> some View {

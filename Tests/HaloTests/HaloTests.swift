@@ -234,6 +234,16 @@ final class PositioningTests: XCTestCase {
         XCTAssertEqual(lastCenter!, 756.0, accuracy: 0.01,
                        "center must be exactly constant at every size")
     }
+
+    func testConfiguredNotchSizeStaysInsideWindowAndPinnedToTop() {
+        let size = HaloNotchMetrics.expandedSize(widthScale: 1.25, heightScale: 1.35)
+        XCTAssertLessThanOrEqual(size.width, HaloNotchMetrics.windowSize.width)
+        XCTAssertLessThanOrEqual(size.height, HaloNotchMetrics.windowSize.height)
+
+        let o = origin(w: size.width, h: size.height)
+        XCTAssertEqual(o.y + size.height, maxY, accuracy: 0.001)
+        XCTAssertEqual(o.x + size.width / 2, midX, accuracy: 0.001)
+    }
 }
 
 // MARK: - Battery: real IOKit data

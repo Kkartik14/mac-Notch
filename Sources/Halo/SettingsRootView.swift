@@ -467,6 +467,35 @@ struct SettingsRootView: View {
         }
     }
 
+    private func notchScaleSlider(
+        title: String,
+        description: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white.opacity(0.88))
+                    Text(description)
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.48))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 16)
+                Text("\(Int((value.wrappedValue * 100).rounded()))%")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.78))
+                    .monospacedDigit()
+            }
+            Slider(value: value, in: range, step: 0.05)
+                .tint(.accentColor)
+        }
+        .padding(.vertical, 9)
+    }
+
     private func settingStepper(
         title: String,
         description: String,
@@ -510,6 +539,100 @@ struct SettingsRootView: View {
                         "Reduce motion",
                         description: "Use direct transitions and avoid the spring morph when you prefer less movement.",
                         isOn: $settings.reduceMotion
+                    )
+                }
+            }
+
+            settingsCard {
+                VStack(alignment: .leading, spacing: 4) {
+                    sectionTitle(
+                        "Apps bar",
+                        description: "Choose the app destinations shown at the bottom of every expanded card. These controls do not hide the underlying activity."
+                    )
+                    divider().padding(.vertical, 8)
+                    settingToggle(
+                        "Music",
+                        description: "Open the Now Playing card.",
+                        isOn: $settings.showMusicInAppsBar
+                    )
+                    settingToggle(
+                        "Calendar",
+                        description: "Open Calendar and Reminders.",
+                        isOn: $settings.showCalendarInAppsBar
+                    )
+                    settingToggle(
+                        "Codex",
+                        description: "Open Codex developer activity.",
+                        isOn: $settings.showCodexInAppsBar
+                    )
+                    settingToggle(
+                        "OpenCode",
+                        description: "Open OpenCode developer activity.",
+                        isOn: $settings.showOpenCodeInAppsBar
+                    )
+                    settingToggle(
+                        "Claude Code",
+                        description: "Open Claude Code developer activity.",
+                        isOn: $settings.showClaudeCodeInAppsBar
+                    )
+
+                    divider().padding(.vertical, 8)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Icon size")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.88))
+                                Text("Scale the icons and their touch targets without changing the notch size.")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white.opacity(0.48))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 16)
+                            Text("\(Int((settings.appsBarScale * 100).rounded()))%")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white.opacity(0.78))
+                                .monospacedDigit()
+                        }
+                        Slider(
+                            value: $settings.appsBarScale,
+                            in: Double(HaloDestinationBarMetrics.minimumScale)...Double(HaloDestinationBarMetrics.maximumScale),
+                            step: 0.05
+                        )
+                        .tint(.accentColor)
+                        HStack {
+                            Text("Small")
+                            Spacer()
+                            Text("Default")
+                            Spacer()
+                            Text("Large")
+                        }
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.42))
+                    }
+                    .padding(.vertical, 9)
+                }
+            }
+
+            settingsCard {
+                VStack(alignment: .leading, spacing: 4) {
+                    sectionTitle(
+                        "Expanded notch",
+                        description: "Customize the expanded surface itself. The closed pill remains aligned to the physical camera housing."
+                    )
+                    divider().padding(.vertical, 8)
+
+                    notchScaleSlider(
+                        title: "Width",
+                        description: "More width gives conversations and calendar rows extra room.",
+                        value: $settings.notchWidthScale,
+                        range: Double(HaloNotchMetrics.minimumWidthScale)...Double(HaloNotchMetrics.maximumWidthScale)
+                    )
+                    notchScaleSlider(
+                        title: "Height",
+                        description: "More height gives expanded screens more breathing room.",
+                        value: $settings.notchHeightScale,
+                        range: Double(HaloNotchMetrics.minimumHeightScale)...Double(HaloNotchMetrics.maximumHeightScale)
                     )
                 }
             }
