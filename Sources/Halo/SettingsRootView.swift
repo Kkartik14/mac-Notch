@@ -350,12 +350,30 @@ struct SettingsRootView: View {
                     sectionTitle("Activity sources")
                     divider().padding(.vertical, 8)
                     settingToggle("Now Playing", description: "Music, Spotify, and system media state.", isOn: $settings.showNowPlaying)
-                    settingToggle("Battery", description: "Charging state and current battery level.", isOn: $settings.showBattery)
+                    settingToggle("Battery", description: "Percentage, charging state, Low Power Mode, battery health, time remaining, and charging alerts.", isOn: $settings.showBattery)
                     settingToggle("Notifications", description: "New notifications when Full Disk Access allows it.", isOn: $settings.showNotifications)
                     settingToggle("Weather", description: "Current conditions from your approximate location.", isOn: $settings.showWeather)
                     settingToggle("Focus", description: "The active Focus mode when its local state is readable.", isOn: $settings.showFocus)
                     settingToggle("Calendar events", description: "Upcoming events from the calendars you allow.", isOn: $settings.showCalendarEvents)
                     settingToggle("Reminders", description: "Incomplete reminders, with completion from Halo.", isOn: $settings.showReminders)
+                    settingToggle("Codex developer activity", description: "Recent Codex chats, live work, approvals, and a local composer.", isOn: $settings.showCodex)
+                    settingToggle(
+                        "Codex WORK activity",
+                        description: "Show Codex WORK actions and their secondary details. Approval prompts remain visible. Off by default.",
+                        isOn: $settings.showCodexWorkActivity
+                    )
+                    settingToggle("OpenCode developer activity", description: "Recent OpenCode sessions, live work, permissions, and a local composer.", isOn: $settings.showOpenCode)
+                    settingToggle(
+                        "OpenCode WORK activity",
+                        description: "Show OpenCode WORK actions and their secondary details. Permission prompts remain visible. Off by default.",
+                        isOn: $settings.showOpenCodeWorkActivity
+                    )
+                    settingToggle("Claude Code developer activity", description: "Recent Claude Code sessions, live work, and a local composer.", isOn: $settings.showClaudeCode)
+                    settingToggle(
+                        "Claude Code WORK activity",
+                        description: "Show Claude Code tool actions and their secondary details. Off by default.",
+                        isOn: $settings.showClaudeCodeWorkActivity
+                    )
                 }
             }
         }

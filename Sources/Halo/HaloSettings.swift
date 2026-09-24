@@ -59,6 +59,12 @@ final class HaloSettings: ObservableObject {
         static let showFocus = "Halo.settings.showFocus"
         static let showCalendarEvents = "Halo.settings.showCalendarEvents"
         static let showReminders = "Halo.settings.showReminders"
+        static let showCodex = "Halo.settings.showCodex"
+        static let showCodexWorkActivity = "Halo.settings.showCodexWorkActivity"
+        static let showOpenCode = "Halo.settings.showOpenCode"
+        static let showOpenCodeWorkActivity = "Halo.settings.showOpenCodeWorkActivity"
+        static let showClaudeCode = "Halo.settings.showClaudeCode"
+        static let showClaudeCodeWorkActivity = "Halo.settings.showClaudeCodeWorkActivity"
         static let showArtwork = "Halo.settings.showArtwork"
         static let showUpNext = "Halo.settings.showUpNext"
         static let showRecentlyPlayed = "Halo.settings.showRecentlyPlayed"
@@ -115,6 +121,30 @@ final class HaloSettings: ObservableObject {
         didSet { defaults.set(showReminders, forKey: Key.showReminders) }
     }
 
+    @Published var showCodex: Bool {
+        didSet { defaults.set(showCodex, forKey: Key.showCodex) }
+    }
+
+    @Published var showCodexWorkActivity: Bool {
+        didSet { defaults.set(showCodexWorkActivity, forKey: Key.showCodexWorkActivity) }
+    }
+
+    @Published var showOpenCode: Bool {
+        didSet { defaults.set(showOpenCode, forKey: Key.showOpenCode) }
+    }
+
+    @Published var showOpenCodeWorkActivity: Bool {
+        didSet { defaults.set(showOpenCodeWorkActivity, forKey: Key.showOpenCodeWorkActivity) }
+    }
+
+    @Published var showClaudeCode: Bool {
+        didSet { defaults.set(showClaudeCode, forKey: Key.showClaudeCode) }
+    }
+
+    @Published var showClaudeCodeWorkActivity: Bool {
+        didSet { defaults.set(showClaudeCodeWorkActivity, forKey: Key.showClaudeCodeWorkActivity) }
+    }
+
     @Published var showArtwork: Bool {
         didSet { defaults.set(showArtwork, forKey: Key.showArtwork) }
     }
@@ -165,6 +195,12 @@ final class HaloSettings: ObservableObject {
         self.showFocus = Self.bool(Key.showFocus, defaults: defaults, fallback: true)
         self.showCalendarEvents = Self.bool(Key.showCalendarEvents, defaults: defaults, fallback: true)
         self.showReminders = Self.bool(Key.showReminders, defaults: defaults, fallback: true)
+        self.showCodex = Self.bool(Key.showCodex, defaults: defaults, fallback: true)
+        self.showCodexWorkActivity = Self.bool(Key.showCodexWorkActivity, defaults: defaults, fallback: false)
+        self.showOpenCode = Self.bool(Key.showOpenCode, defaults: defaults, fallback: true)
+        self.showOpenCodeWorkActivity = Self.bool(Key.showOpenCodeWorkActivity, defaults: defaults, fallback: false)
+        self.showClaudeCode = Self.bool(Key.showClaudeCode, defaults: defaults, fallback: true)
+        self.showClaudeCodeWorkActivity = Self.bool(Key.showClaudeCodeWorkActivity, defaults: defaults, fallback: false)
         self.showArtwork = Self.bool(Key.showArtwork, defaults: defaults, fallback: true)
         self.showUpNext = Self.bool(Key.showUpNext, defaults: defaults, fallback: true)
         self.showRecentlyPlayed = Self.bool(Key.showRecentlyPlayed, defaults: defaults, fallback: true)
@@ -209,6 +245,12 @@ final class HaloSettings: ObservableObject {
         showFocus = true
         showCalendarEvents = true
         showReminders = true
+        showCodex = true
+        showCodexWorkActivity = false
+        showOpenCode = true
+        showOpenCodeWorkActivity = false
+        showClaudeCode = true
+        showClaudeCodeWorkActivity = false
         showArtwork = true
         showUpNext = true
         showRecentlyPlayed = true

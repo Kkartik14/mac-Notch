@@ -67,6 +67,31 @@ Weather refreshes every ten minutes and throttles requests to at most once every
 - A timed event is shown as a passive pill before it starts and expands once at its start time. Halo does not play a sound or send a duplicate native Calendar notification.
 - Tap the circle on an expanded reminder row to mark it complete. The row disappears after EventKit confirms the save.
 
+## Ask Codex does not send
+
+- Confirm the bundled Halo.app can find the authenticated `codex` executable. Halo launches `codex app-server --stdio` locally and does not store Codex credentials.
+- Halo attempts `thread/resume` for the selected history before sending, including stored/paginated histories whose list entry does not state whether input is accepted. If Codex reports that the chat is already owned by another active session, Halo hands the message to that session through the installed CLI's experimental queue API and shows `QUE` while it is pending. Keep the owning Codex session running; Halo briefly refreshes the history after the handoff. If the queue API is unavailable or fails, update Codex and retry. If Codex explicitly reports that the chat cannot accept direct input, Halo disables that composer instead of silently creating a different chat; click the + New chat button to start a writable chat in the same workspace.
+- If the composer does not accept keyboard input, restart the rebuilt Halo.app; the halo panel must become the key window when the composer is clicked.
+- If a turn is waiting, resolve the inline command/file approval or use Stop Codex before sending another request.
+
+## Ask OpenCode does not send
+
+- Confirm the bundled Halo.app can find the configured `opencode` executable. Halo launches `opencode serve --hostname 127.0.0.1 --port 0` locally with an ephemeral server password and does not store OpenCode provider credentials.
+- If the compact OpenCode pill stays on `OPN`, quit and reopen the rebuilt Halo.app. Older builds launched OpenCode's normal auth-protected server mode, which can leave the activity without a session and stuck on its connection label.
+- OpenCode sessions are discovered through the local server's session API. Click the OpenCode refresh button after creating a session in another OpenCode client; live changes normally arrive through the SSE stream without polling.
+- The composer only sends when the selected session is idle. If OpenCode is working, use Stop OpenCode or wait for the session to become ready.
+- If a permission prompt is visible, choose Allow or No before sending another message. Question-style interactive requests are not yet supported in Halo; answer those from the OpenCode client.
+- If OpenCode is not installed or the server cannot start, disable and re-enable OpenCode developer activity in Settings after correcting the CLI installation.
+
+## Ask Claude Code does not send
+
+- Confirm the bundled Halo.app can find the authenticated `claude` executable. Halo launches Claude Code in print mode and does not read or store Anthropic credentials. `command -v claude`, `claude --version`, and `claude auth status` are useful read-only checks.
+- Claude Code activity discovers persisted sessions from `~/.claude/projects`. Click the Claude Code refresh button after creating a session outside Halo; Halo-owned turns do not need polling because their JSON stream is live.
+- The composer resumes an existing session by its Claude session ID. A new session is created from the `+` button and uses the current working directory available to Halo. If the directory is not accessible, Claude Code reports the launch error in the card.
+- Halo starts print-mode turns with manual permissions and never uses `--dangerously-skip-permissions`. If a tool is denied, review Claude Code's permission configuration or continue from Claude Code itself; the denial is not an approval prompt that Halo can silently bypass.
+- While a turn is running, the composer is disabled. Use Stop Claude Code or wait for the final result before sending another message.
+- If Claude Code is not installed or its authentication has expired, enable the source in Settings after correcting the CLI installation or signing in with Claude Code.
+
 ## Tests cannot find XCTest
 
 Use the full Xcode developer directory:
