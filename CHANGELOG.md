@@ -15,6 +15,10 @@ This file records user-visible changes. The project is currently in active devel
 - Redesigned the expanded Calendar card with a fixed next-item panel and scrollable Up Next agenda.
 - Raised the Calendar agenda cap to 25 items and added shared row actions plus wake/clock-change recovery.
 - Added exact Calendar/Reminders item opening, event start/end ranges, Apple Maps location actions, and optional meeting links.
+- Added Codex developer activity through the local Codex app-server, including recent chats, repository context, live work events, a fixed-size chat workspace, composer, stop action, and inline command/file approvals.
+- Added an opt-in Codex WORK activity preference; WORK actions stay hidden by default while secondary status/context and approval explanations remain available in Settings.
+- Codex now opens the newest-created chat by default, independent of the server's returned thread order.
+- Codex stored and paginated histories can be continued through `thread/resume`; chats explicitly marked read-only no longer create a new chat implicitly.
 - Added a persistent, app-like Settings window for startup, interaction, activity visibility, music rails, calendar presentation, motion, and permission status.
 - Added a macOS-aware permission request ledger so automatic EventKit and location prompts happen once while intentional retries remain available from Settings.
 - Added activity priority, collapse, dismissal, and progress interpolation behavior.

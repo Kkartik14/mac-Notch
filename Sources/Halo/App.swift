@@ -24,10 +24,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notificationMonitor = NotificationMonitor()
     private let calendarMonitor = CalendarMonitor()
     private let historyMonitor = PlaybackHistoryMonitor()
+    private let codexMonitor = CodexMonitor()
+    private let openCodeMonitor = OpenCodeMonitor()
+    private let claudeCodeMonitor = ClaudeCodeMonitor()
     private let settingsWindowController = HaloSettingsWindowController()
     private let settings = HaloSettings.shared
     private var settingsObservation: AnyCancellable?
-    private var wasPluggedIn = false
+    private var lastBatteryCharge: BatteryMonitor.Charge?
+    private var batteryNotificationGeneration: UInt64 = 0
+    private var codexWasWaiting = false
+    private var codexRequested = false
+    private var openCodeWasWaiting = false
+    private var openCodeRequested = false
+    private var claudeCodeWasWaiting = false
+    private var claudeCodeRequested = false
 
     /// Transport routing: the player that is currently playing owns the
     /// keys. Otherwise prefer Spotify, then Music, then system MediaRemote.
@@ -94,9 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if spotifyPlaying, let cur = spotifyMonitor.current {
-            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, intent: .update)
         } else if musicPlaying, let cur = musicMonitor.current {
-            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, intent: .update)
         } else {
             haloController.center.dismiss("nowPlaying")
         }
@@ -146,12 +156,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No menu-bar icon: the halo is the entire UI. All actions live on
         // its right-click menu instead.
         haloController.actions = HaloActions(
+            showDestination: { [weak self] destination in self?.showDestination(destination) },
             showNowPlaying: { [weak self] in self?.showNowPlaying() },
             showCharging: { [weak self] in self?.showCharging() },
             showNotification: { [weak self] in self?.showNotification() },
             showWeather: { [weak self] in self?.showWeather() },
             showFocus: { [weak self] in self?.showFocus() },
             showCalendar: { [weak self] in self?.showCalendar() },
+            showCodex: { [weak self] in self?.showCodex() },
+            showOpenCode: { [weak self] in self?.showOpenCode() },
+            showClaudeCode: { [weak self] in self?.showClaudeCode() },
             previewPillMusic: { [weak self] in self?.previewPill("nowPlaying") },
             previewPillWeather: { [weak self] in self?.previewPill("weather") },
             previewPillCharging: { [weak self] in self?.previewPill("charging") },
@@ -204,12 +218,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         if !settings.showNowPlaying { haloController.center.dismiss("nowPlaying") }
-        if !settings.showBattery { haloController.center.dismiss("charging") }
+        if !settings.showBattery {
+            haloController.center.dismiss("charging")
+        } else {
+            // Re-surface the current snapshot when the user turns the source
+            // back on; a quiet refresh will not otherwise emit a callback.
+            batteryMonitor.refresh(forcePublish: true)
+        }
         if !settings.showNotifications { haloController.center.dismiss("notification") }
         if !settings.showWeather { haloController.center.dismiss("weather") }
         if !settings.showFocus { haloController.center.dismiss("focus") }
         if !settings.showCalendarEvents && !settings.showReminders {
             haloController.center.dismiss("calendar")
+        }
+        if !settings.showCodex {
+            haloController.center.dismiss("codex")
+            codexMonitor.stop()
+        } else if codexMonitor.connection == .stopped {
+            codexMonitor.start()
+        }
+        if !settings.showOpenCode {
+            haloController.center.dismiss("openCode")
+            openCodeMonitor.stop()
+        } else if openCodeMonitor.connection == .stopped {
+            openCodeMonitor.start()
+        }
+        if !settings.showClaudeCode {
+            haloController.center.dismiss("claudeCode")
+            claudeCodeMonitor.stop()
+        } else if claudeCodeMonitor.connection == .stopped {
+            claudeCodeMonitor.start()
         }
     }
 
@@ -235,6 +273,122 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         haloController.center.onOpenCalendarURL = { [weak self] url in
             self?.openCalendarURL(url)
         }
+        haloController.center.onSelectCodexChat = { [weak self] id in
+            self?.codexMonitor.selectChat(id)
+        }
+        haloController.center.onNewCodexChat = { [weak self] in
+            self?.codexMonitor.createChat()
+        }
+        haloController.center.onRefreshCodex = { [weak self] in
+            self?.codexMonitor.refresh()
+        }
+        haloController.center.onSendCodex = { [weak self] text in
+            self?.codexMonitor.send(text)
+        }
+        haloController.center.onInterruptCodex = { [weak self] in
+            self?.codexMonitor.interrupt()
+        }
+        haloController.center.onResolveCodexApproval = { [weak self] decision in
+            self?.codexMonitor.resolveApproval(decision)
+        }
+
+        haloController.center.onSelectOpenCodeSession = { [weak self] id in
+            self?.openCodeMonitor.selectSession(id)
+        }
+        haloController.center.onNewOpenCodeSession = { [weak self] in
+            self?.openCodeMonitor.createSession()
+        }
+        haloController.center.onRefreshOpenCode = { [weak self] in
+            self?.openCodeMonitor.refresh()
+        }
+        haloController.center.onSendOpenCode = { [weak self] text in
+            self?.openCodeMonitor.send(text)
+        }
+        haloController.center.onInterruptOpenCode = { [weak self] in
+            self?.openCodeMonitor.interrupt()
+        }
+        haloController.center.onResolveOpenCodePermission = { [weak self] decision in
+            self?.openCodeMonitor.resolvePermission(decision)
+        }
+
+        haloController.center.onSelectClaudeCodeSession = { [weak self] id in
+            self?.claudeCodeMonitor.selectSession(id)
+        }
+        haloController.center.onNewClaudeCodeSession = { [weak self] in
+            self?.claudeCodeMonitor.createSession()
+        }
+        haloController.center.onRefreshClaudeCode = { [weak self] in
+            self?.claudeCodeMonitor.refresh()
+        }
+        haloController.center.onSendClaudeCode = { [weak self] text in
+            self?.claudeCodeMonitor.send(text)
+        }
+        haloController.center.onInterruptClaudeCode = { [weak self] in
+            self?.claudeCodeMonitor.interrupt()
+        }
+
+        // Codex — a local app-server stream, never terminal scraping. The
+        // monitor publishes the same activity for the compact pill and the
+        // fixed-size expanded chat workspace.
+        codexMonitor.onActivity = { [weak self] activity in
+            guard let self, self.settings.showCodex else { return }
+            let shouldSurface = !activity.chats.isEmpty || self.codexRequested
+            guard shouldSurface else { return }
+
+            let becameWaiting = activity.selectedState == .waiting && !self.codexWasWaiting
+            self.codexWasWaiting = activity.selectedState == .waiting
+            self.haloController.show(
+                .codex(activity),
+                autoDismissAfter: nil,
+                intent: becameWaiting && self.settings.automaticallyExpandActivities
+                    ? .expand(.automatic)
+                    : .update,
+                collapseAfter: nil
+            )
+        }
+        if settings.showCodex { codexMonitor.start() }
+
+        // OpenCode — a local HTTP server plus SSE event stream. The monitor
+        // owns process discovery, session history, live deltas, and
+        // permissions; the fixed Halo surface only renders its value model.
+        openCodeMonitor.onActivity = { [weak self] activity in
+            guard let self, self.settings.showOpenCode else { return }
+            let shouldSurface = !activity.sessions.isEmpty || self.openCodeRequested
+            guard shouldSurface else { return }
+
+            let becameWaiting = activity.selectedState == .waiting && !self.openCodeWasWaiting
+            self.openCodeWasWaiting = activity.selectedState == .waiting
+            self.haloController.show(
+                .openCode(activity),
+                autoDismissAfter: nil,
+                intent: becameWaiting && self.settings.automaticallyExpandActivities
+                    ? .expand(.automatic)
+                    : .update,
+                collapseAfter: nil
+            )
+        }
+        if settings.showOpenCode { openCodeMonitor.start() }
+
+        // Claude Code — local print-mode JSON streaming. Claude owns
+        // authentication, permissions, and transcript persistence; this
+        // adapter only exposes sessions and live developer activity.
+        claudeCodeMonitor.onActivity = { [weak self] activity in
+            guard let self, self.settings.showClaudeCode else { return }
+            let shouldSurface = !activity.sessions.isEmpty || self.claudeCodeRequested
+            guard shouldSurface else { return }
+
+            let becameWaiting = activity.selectedState == .waiting && !self.claudeCodeWasWaiting
+            self.claudeCodeWasWaiting = activity.selectedState == .waiting
+            self.haloController.show(
+                .claudeCode(activity),
+                autoDismissAfter: nil,
+                intent: becameWaiting && self.settings.automaticallyExpandActivities
+                    ? .expand(.automatic)
+                    : .update,
+                collapseAfter: nil
+            )
+        }
+        if settings.showClaudeCode { claudeCodeMonitor.start() }
 
         // Now Playing — track changes pop the card open and it STAYS open
         // until dismissed. No auto-collapse: collapsing on its own is what
@@ -244,7 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.haloController.show(
                 .nowPlaying(activity),
                 autoDismissAfter: nil,
-                expand: self.settings.automaticallyExpandActivities,
+                intent: self.settings.automaticallyExpandActivities ? .expand(.automatic) : .update,
                 collapseAfter: 3
             )
         }
@@ -260,7 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.haloController.show(
                 .nowPlaying(activity),
                 autoDismissAfter: nil,
-                expand: self.settings.automaticallyExpandActivities,
+                intent: self.settings.automaticallyExpandActivities ? .expand(.automatic) : .update,
                 collapseAfter: 3
             )
         }
@@ -281,7 +435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.haloController.show(
                 .nowPlaying(activity),
                 autoDismissAfter: nil,
-                expand: self.settings.automaticallyExpandActivities,
+                intent: self.settings.automaticallyExpandActivities ? .expand(.automatic) : .update,
                 collapseAfter: 3
             )
         }
@@ -296,39 +450,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         spotifyMonitor.start()
 
-        // Battery — fresh plug jumps to the top for 2s (card pops, then
-        // priority order returns), unplug clears it. Level changes while
-        // plugged update quietly in rank position.
+        // Battery — keep one live activity for both AC and battery power.
+        // Power-state transitions briefly move it to the top so charging,
+        // unplugging, full charge, and Low Power Mode are visible events.
         batteryMonitor.start { [weak self] charge in
             guard let self else { return }
+            let previous = self.lastBatteryCharge
+            self.lastBatteryCharge = charge
             guard self.settings.showBattery else {
-                self.wasPluggedIn = charge.pluggedIn
                 self.haloController.center.dismiss("charging")
                 return
             }
+
             self.haloController.center.updateBatteryLevel(charge.level)
-            if charge.pluggedIn {
-                let isNewPlug = !self.wasPluggedIn
-                self.wasPluggedIn = true
-                self.haloController.show(
-                    .charging(ChargingActivity(
-                        level: charge.level,
-                        isPluggedIn: true,
-                        timeRemainingText: BatteryMonitor.etaText(minutes: charge.minutesRemaining)
-                    )),
-                    autoDismissAfter: nil,
-                    expand: isNewPlug && self.settings.automaticallyExpandActivities,
-                    collapseAfter: isNewPlug ? 2 : nil
-                )
-                if isNewPlug {
-                    self.haloController.center.moveToTop("charging")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                        self?.haloController.center.applyPriorityOrder()
-                    }
+
+            let powerStateChanged: Bool = {
+                guard let previous else { return false }
+                return previous.pluggedIn != charge.pluggedIn
+                    || previous.isCharging != charge.isCharging
+                    || previous.isFullyCharged != charge.isFullyCharged
+                    || previous.isLowPowerMode != charge.isLowPowerMode
+            }()
+            let shouldExpand = powerStateChanged && self.settings.automaticallyExpandActivities
+
+            self.haloController.show(
+                .charging(self.batteryActivity(for: charge)),
+                autoDismissAfter: nil,
+                intent: shouldExpand ? .expand(.automatic) : .update,
+                collapseAfter: shouldExpand ? 2 : nil
+            )
+
+            if powerStateChanged {
+                self.haloController.center.moveToTop("charging")
+                self.batteryNotificationGeneration &+= 1
+                let generation = self.batteryNotificationGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard let self, self.batteryNotificationGeneration == generation else { return }
+                    self.haloController.center.applyPriorityOrder()
                 }
-            } else {
-                self.wasPluggedIn = false
-                self.haloController.center.dismiss("charging")
             }
         }
 
@@ -340,7 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self,
                       self.settings.showCalendarEvents || self.settings.showReminders
                 else { return }
-                self.haloController.show(.calendar(activity), autoDismissAfter: nil, expand: false)
+                self.haloController.show(.calendar(activity), autoDismissAfter: nil, intent: .update)
             },
             onClear: { [weak self] in
                 self?.haloController.center.dismiss("calendar")
@@ -354,7 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.haloController.show(
                     .calendar(activity),
                     autoDismissAfter: nil,
-                    expand: self.settings.automaticallyExpandActivities,
+                    intent: self.settings.automaticallyExpandActivities ? .expand(.automatic) : .update,
                     collapseAfter: CalendarMonitor.startAlertDuration
                 )
             }
@@ -363,7 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Weather — quiet pill, refreshes every 10 min. Never force-expands.
         weatherMonitor.start { [weak self] activity in
             guard let self, self.settings.showWeather else { return }
-            self.haloController.show(.weather(activity), autoDismissAfter: nil, expand: false)
+            self.haloController.show(.weather(activity), autoDismissAfter: nil, intent: .update)
         }
 
         // Focus — live system mode via disk adapter (silent without FDA).
@@ -373,7 +532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.haloController.show(
                 .focus(FocusActivity(mode: state.name, symbol: state.symbol)),
                 autoDismissAfter: nil,
-                expand: self.settings.automaticallyExpandActivities,
+                intent: self.settings.automaticallyExpandActivities ? .expand(.automatic) : .update,
                 collapseAfter: 6
             )
         }
@@ -407,7 +566,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 body: body,
                 icon: "bell.fill",
                 appIconData: self.notificationMonitor.iconData(for: note.appIdentifier)
-            )), autoDismissAfter: 3, expand: false)
+            )), autoDismissAfter: 3, intent: .update)
         }
         notificationMonitor.start()
     }
@@ -488,6 +647,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let calendarItem = NSMenuItem(title: "Calendar", action: #selector(showCalendar), keyEquivalent: "k")
         calendarItem.target = self
         menu.addItem(calendarItem)
+        let codexItem = NSMenuItem(title: "Codex · Developer activity", action: #selector(showCodex), keyEquivalent: "x")
+        codexItem.target = self
+        menu.addItem(codexItem)
+        let openCodeItem = NSMenuItem(title: "OpenCode · Developer activity", action: #selector(showOpenCode), keyEquivalent: "o")
+        openCodeItem.target = self
+        menu.addItem(openCodeItem)
+        let claudeCodeItem = NSMenuItem(title: "Claude Code · Developer activity", action: #selector(showClaudeCode), keyEquivalent: "l")
+        claudeCodeItem.target = self
+        menu.addItem(claudeCodeItem)
         let pillMenu = NSMenu()
         let pillDefs: [(String, Selector)] = [
             ("Pill · Music", #selector(previewPillMusic)),
@@ -537,7 +705,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             else if self.musicPlaying { cur = self.musicMonitor.current }
             else { cur = self.spotifyMonitor.current ?? self.musicMonitor.current ?? self.nowPlayingMonitor.current }
             guard let cur else { return }
-            self.haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: true)
+            self.haloController.show(.nowPlaying(cur), autoDismissAfter: nil, intent: .expand(.user))
+        }
+    }
+
+    /// Routes the expanded app bar through the same explicit-selection paths
+    /// as the context menu. Each destination therefore gets the existing
+    /// manual override behavior instead of inventing a second routing layer.
+    private func showDestination(_ destination: HaloDestination) {
+        switch destination {
+        case .nowPlaying: showNowPlaying()
+        case .calendar: showCalendar()
+        case .codex: showCodex()
+        case .openCode: showOpenCode()
+        case .claudeCode: showClaudeCode()
         }
     }
 
@@ -546,61 +727,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard settings.showBattery else { return }
         batteryMonitor.refresh() // synchronous: `current` is fresh on return
         guard let cur = batteryMonitor.current else { return }
-        haloController.show(.charging(ChargingActivity(
-            level: cur.level,
-            isPluggedIn: cur.pluggedIn,
-            timeRemainingText: BatteryMonitor.etaText(minutes: cur.minutesRemaining)
-        )), autoDismissAfter: nil, expand: true)
+        haloController.show(.charging(batteryActivity(for: cur)), autoDismissAfter: nil, intent: .expand(.user))
+    }
+
+    private func batteryActivity(for charge: BatteryMonitor.Charge) -> ChargingActivity {
+        ChargingActivity(
+            level: charge.level,
+            isPluggedIn: charge.pluggedIn,
+            timeRemainingText: BatteryMonitor.timeRemainingText(
+                minutes: charge.minutesRemaining,
+                isCharging: charge.isCharging,
+                isFullyCharged: charge.isFullyCharged
+            ),
+            isCharging: charge.isCharging,
+            isFullyCharged: charge.isFullyCharged,
+            isLowPowerMode: charge.isLowPowerMode,
+            healthPercent: charge.healthPercent,
+            cycleCount: charge.cycleCount
+        )
     }
 
     @objc private func showWeather() {
         guard settings.showWeather else { return }
         guard let cur = weatherMonitor.current else { return }
-        haloController.show(.weather(cur), autoDismissAfter: nil, expand: true)
+        haloController.show(.weather(cur), autoDismissAfter: nil, intent: .expand(.user))
     }
 
     @objc private func showFocus() {
         guard settings.showFocus else { return }
         if let live = focusMonitor.current {
-            haloController.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: true)
+            haloController.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, intent: .expand(.user))
         } else {
-            haloController.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: true)
+            haloController.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, intent: .expand(.user))
         }
     }
 
     @objc private func showCalendar() {
         guard settings.showCalendarEvents || settings.showReminders else { return }
         calendarMonitor.refresh()
-        guard let current = calendarMonitor.current else { return }
-        haloController.show(.calendar(current), autoDismissAfter: nil, expand: true)
+        // EventKit refreshes Reminders asynchronously, and an empty calendar
+        // legitimately has no current activity. Open the screen immediately;
+        // CalendarExpandedView already renders the empty state and the monitor
+        // will replace it when fresh data arrives.
+        let current = calendarMonitor.current ?? CalendarActivity(items: [])
+        haloController.show(.calendar(current), autoDismissAfter: nil, intent: .expand(.user))
     }
 
-    /// Preview any activity as a settled pill (expand:false), live data when
-    /// available, demo data otherwise. For testing pill designs.
+    /// Open the Codex activity in Halo's existing fixed expanded surface.
+    /// Selecting this action also makes an empty or unavailable state visible,
+    /// so the user gets a useful explanation instead of a silent no-op.
+    @objc private func showCodex() {
+        guard settings.showCodex else {
+            openSettings()
+            return
+        }
+        codexRequested = true
+        codexMonitor.start()
+        haloController.show(.codex(codexMonitor.activity), autoDismissAfter: nil, intent: .expand(.user))
+    }
+
+    /// Open the OpenCode activity in Halo's existing fixed expanded surface.
+    /// The local OpenCode server starts on a free loopback port.
+    @objc private func showOpenCode() {
+        guard settings.showOpenCode else {
+            openSettings()
+            return
+        }
+        openCodeRequested = true
+        openCodeMonitor.start()
+        haloController.show(.openCode(openCodeMonitor.activity), autoDismissAfter: nil, intent: .expand(.user))
+    }
+
+    /// Open Claude Code activity in Halo's existing fixed expanded surface.
+    /// Claude Code remains responsible for authentication and permissions;
+    /// Halo only starts a structured local stream when a turn is sent.
+    @objc private func showClaudeCode() {
+        guard settings.showClaudeCode else {
+            openSettings()
+            return
+        }
+        claudeCodeRequested = true
+        claudeCodeMonitor.start()
+        haloController.show(.claudeCode(claudeCodeMonitor.activity), autoDismissAfter: nil, intent: .expand(.user))
+    }
+
+    /// Preview any activity as a settled pill, using live data when
+    /// available and demo data otherwise. For testing pill designs.
     private func previewPill(_ id: String) {
         switch id {
         case "nowPlaying":
             let cur = musicMonitor.current ?? nowPlayingMonitor.current
                 ?? NowPlayingActivity(title: "Pray For Me", artist: "The Weeknd, Kendrick Lamar", album: "Starboy", appName: "Music", isPlaying: true, elapsed: 50, duration: 210)
-            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, expand: false)
+            haloController.show(.nowPlaying(cur), autoDismissAfter: nil, intent: .update)
         case "charging":
             batteryMonitor.refresh()
             let c = batteryMonitor.current
-            haloController.show(.charging(ChargingActivity(
-                level: c?.level ?? 0.34,
-                isPluggedIn: c?.pluggedIn ?? true,
-                timeRemainingText: BatteryMonitor.etaText(minutes: c?.minutesRemaining ?? 40)
-            )), autoDismissAfter: nil, expand: false)
+            let preview = c.map(batteryActivity(for:)) ?? ChargingActivity(
+                level: 0.34,
+                isPluggedIn: true,
+                timeRemainingText: BatteryMonitor.timeRemainingText(
+                    minutes: 40,
+                    isCharging: true
+                ),
+                isCharging: true
+            )
+            haloController.show(.charging(preview), autoDismissAfter: nil, intent: .update)
         case "weather":
             let w = weatherMonitor.current ?? WeatherActivity(temperatureC: 30, condition: "Overcast", symbol: "cloud.fill", windKph: 12, highC: 31, lowC: 24, isDay: true)
-            haloController.show(.weather(w), autoDismissAfter: nil, expand: false)
+            haloController.show(.weather(w), autoDismissAfter: nil, intent: .update)
         case "notification":
-            haloController.show(.notification(NotificationActivity(appName: "Messages", sender: "Henrik", body: "Psst… it's interactive.", icon: "message.fill")), autoDismissAfter: nil, expand: false)
+            haloController.show(.notification(NotificationActivity(appName: "Messages", sender: "Henrik", body: "Psst… it's interactive.", icon: "message.fill")), autoDismissAfter: nil, intent: .update)
         case "focus":
             if let live = focusMonitor.current {
-                haloController.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, expand: false)
+                haloController.show(.focus(FocusActivity(mode: live.name, symbol: live.symbol)), autoDismissAfter: nil, intent: .update)
             } else {
-                haloController.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, expand: false)
+                haloController.show(.focus(FocusActivity(mode: "Do Not Disturb")), autoDismissAfter: nil, intent: .update)
             }
         case "calendar":
             var testCalendar = Calendar.current
@@ -622,7 +863,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 kind: .event,
                 isCompleted: false
             )
-            haloController.show(.calendar(CalendarActivity(items: [sample])), autoDismissAfter: nil, expand: false)
+            haloController.show(.calendar(CalendarActivity(items: [sample])), autoDismissAfter: nil, intent: .update)
         default:
             break
         }
@@ -642,7 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender: "Henrik",
             body: "Psst… it's interactive.",
             icon: "message.fill"
-        )))
+        )), intent: .expand(.user))
     }
 
     @objc private func expandTop() {

@@ -2,6 +2,41 @@ import XCTest
 @testable import Halo
 
 final class HaloScrollMetricsTests: XCTestCase {
+    func testExpandedLayoutAllocatesMoreViewportAsTheNotchGrows() {
+        let compact = HaloExpandedLayout(size: CGSize(width: 504, height: 98))
+        let spacious = HaloExpandedLayout(size: CGSize(width: 760, height: 203))
+
+        XCTAssertLessThan(compact.railWidth, spacious.railWidth)
+        XCTAssertLessThan(compact.railViewportHeight, spacious.railViewportHeight)
+        XCTAssertLessThan(
+            compact.messageViewportHeight(),
+            spacious.messageViewportHeight()
+        )
+    }
+
+    func testExpandedLayoutReservesSecondaryConversationRows() {
+        let layout = HaloExpandedLayout(size: HaloExpandedLayout.defaultSize)
+        XCTAssertEqual(
+            layout.messageViewportHeight(reservedHeight: 34),
+            layout.messageViewportHeight() - 34
+        )
+        XCTAssertGreaterThanOrEqual(
+            layout.messageViewportHeight(reservedHeight: 500),
+            24
+        )
+    }
+
+    func testPlayerLayoutUsesAdditionalNotchHeight() {
+        let compact = HaloExpandedLayout(size: CGSize(width: 504, height: 98))
+        let spacious = HaloExpandedLayout(size: CGSize(width: 760, height: 203))
+
+        XCTAssertLessThan(compact.playerArtworkSize, spacious.playerArtworkSize)
+        XCTAssertLessThan(compact.playerRailArtworkSize, spacious.playerRailArtworkSize)
+        XCTAssertLessThan(compact.playerRailViewportHeight, spacious.playerRailViewportHeight)
+        XCTAssertLessThanOrEqual(spacious.playerArtworkSize, 130)
+        XCTAssertLessThanOrEqual(spacious.playerRailArtworkSize, 48)
+    }
+
     func testContentHeightIncludesOnlyBetweenRowSpacing() {
         XCTAssertEqual(
             HaloScrollMetrics.contentHeight(for: 4, rowHeight: 30, rowSpacing: 10),

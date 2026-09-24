@@ -59,6 +59,20 @@ final class HaloSettings: ObservableObject {
         static let showFocus = "Halo.settings.showFocus"
         static let showCalendarEvents = "Halo.settings.showCalendarEvents"
         static let showReminders = "Halo.settings.showReminders"
+        static let showCodex = "Halo.settings.showCodex"
+        static let showCodexWorkActivity = "Halo.settings.showCodexWorkActivity"
+        static let showOpenCode = "Halo.settings.showOpenCode"
+        static let showOpenCodeWorkActivity = "Halo.settings.showOpenCodeWorkActivity"
+        static let showClaudeCode = "Halo.settings.showClaudeCode"
+        static let showClaudeCodeWorkActivity = "Halo.settings.showClaudeCodeWorkActivity"
+        static let showMusicInAppsBar = "Halo.settings.showMusicInAppsBar"
+        static let showCalendarInAppsBar = "Halo.settings.showCalendarInAppsBar"
+        static let showCodexInAppsBar = "Halo.settings.showCodexInAppsBar"
+        static let showOpenCodeInAppsBar = "Halo.settings.showOpenCodeInAppsBar"
+        static let showClaudeCodeInAppsBar = "Halo.settings.showClaudeCodeInAppsBar"
+        static let appsBarScale = "Halo.settings.appsBarScale"
+        static let notchWidthScale = "Halo.settings.notchWidthScale"
+        static let notchHeightScale = "Halo.settings.notchHeightScale"
         static let showArtwork = "Halo.settings.showArtwork"
         static let showUpNext = "Halo.settings.showUpNext"
         static let showRecentlyPlayed = "Halo.settings.showRecentlyPlayed"
@@ -115,6 +129,62 @@ final class HaloSettings: ObservableObject {
         didSet { defaults.set(showReminders, forKey: Key.showReminders) }
     }
 
+    @Published var showCodex: Bool {
+        didSet { defaults.set(showCodex, forKey: Key.showCodex) }
+    }
+
+    @Published var showCodexWorkActivity: Bool {
+        didSet { defaults.set(showCodexWorkActivity, forKey: Key.showCodexWorkActivity) }
+    }
+
+    @Published var showOpenCode: Bool {
+        didSet { defaults.set(showOpenCode, forKey: Key.showOpenCode) }
+    }
+
+    @Published var showOpenCodeWorkActivity: Bool {
+        didSet { defaults.set(showOpenCodeWorkActivity, forKey: Key.showOpenCodeWorkActivity) }
+    }
+
+    @Published var showClaudeCode: Bool {
+        didSet { defaults.set(showClaudeCode, forKey: Key.showClaudeCode) }
+    }
+
+    @Published var showClaudeCodeWorkActivity: Bool {
+        didSet { defaults.set(showClaudeCodeWorkActivity, forKey: Key.showClaudeCodeWorkActivity) }
+    }
+
+    @Published var showMusicInAppsBar: Bool {
+        didSet { defaults.set(showMusicInAppsBar, forKey: Key.showMusicInAppsBar) }
+    }
+
+    @Published var showCalendarInAppsBar: Bool {
+        didSet { defaults.set(showCalendarInAppsBar, forKey: Key.showCalendarInAppsBar) }
+    }
+
+    @Published var showCodexInAppsBar: Bool {
+        didSet { defaults.set(showCodexInAppsBar, forKey: Key.showCodexInAppsBar) }
+    }
+
+    @Published var showOpenCodeInAppsBar: Bool {
+        didSet { defaults.set(showOpenCodeInAppsBar, forKey: Key.showOpenCodeInAppsBar) }
+    }
+
+    @Published var showClaudeCodeInAppsBar: Bool {
+        didSet { defaults.set(showClaudeCodeInAppsBar, forKey: Key.showClaudeCodeInAppsBar) }
+    }
+
+    @Published var appsBarScale: Double {
+        didSet { defaults.set(appsBarScale, forKey: Key.appsBarScale) }
+    }
+
+    @Published var notchWidthScale: Double {
+        didSet { defaults.set(notchWidthScale, forKey: Key.notchWidthScale) }
+    }
+
+    @Published var notchHeightScale: Double {
+        didSet { defaults.set(notchHeightScale, forKey: Key.notchHeightScale) }
+    }
+
     @Published var showArtwork: Bool {
         didSet { defaults.set(showArtwork, forKey: Key.showArtwork) }
     }
@@ -165,6 +235,20 @@ final class HaloSettings: ObservableObject {
         self.showFocus = Self.bool(Key.showFocus, defaults: defaults, fallback: true)
         self.showCalendarEvents = Self.bool(Key.showCalendarEvents, defaults: defaults, fallback: true)
         self.showReminders = Self.bool(Key.showReminders, defaults: defaults, fallback: true)
+        self.showCodex = Self.bool(Key.showCodex, defaults: defaults, fallback: true)
+        self.showCodexWorkActivity = Self.bool(Key.showCodexWorkActivity, defaults: defaults, fallback: false)
+        self.showOpenCode = Self.bool(Key.showOpenCode, defaults: defaults, fallback: true)
+        self.showOpenCodeWorkActivity = Self.bool(Key.showOpenCodeWorkActivity, defaults: defaults, fallback: false)
+        self.showClaudeCode = Self.bool(Key.showClaudeCode, defaults: defaults, fallback: true)
+        self.showClaudeCodeWorkActivity = Self.bool(Key.showClaudeCodeWorkActivity, defaults: defaults, fallback: false)
+        self.showMusicInAppsBar = Self.bool(Key.showMusicInAppsBar, defaults: defaults, fallback: true)
+        self.showCalendarInAppsBar = Self.bool(Key.showCalendarInAppsBar, defaults: defaults, fallback: true)
+        self.showCodexInAppsBar = Self.bool(Key.showCodexInAppsBar, defaults: defaults, fallback: true)
+        self.showOpenCodeInAppsBar = Self.bool(Key.showOpenCodeInAppsBar, defaults: defaults, fallback: true)
+        self.showClaudeCodeInAppsBar = Self.bool(Key.showClaudeCodeInAppsBar, defaults: defaults, fallback: true)
+        self.appsBarScale = Self.double(Key.appsBarScale, defaults: defaults, fallback: 1.0)
+        self.notchWidthScale = Self.double(Key.notchWidthScale, defaults: defaults, fallback: 1.0)
+        self.notchHeightScale = Self.double(Key.notchHeightScale, defaults: defaults, fallback: 1.0)
         self.showArtwork = Self.bool(Key.showArtwork, defaults: defaults, fallback: true)
         self.showUpNext = Self.bool(Key.showUpNext, defaults: defaults, fallback: true)
         self.showRecentlyPlayed = Self.bool(Key.showRecentlyPlayed, defaults: defaults, fallback: true)
@@ -209,6 +293,20 @@ final class HaloSettings: ObservableObject {
         showFocus = true
         showCalendarEvents = true
         showReminders = true
+        showCodex = true
+        showCodexWorkActivity = false
+        showOpenCode = true
+        showOpenCodeWorkActivity = false
+        showClaudeCode = true
+        showClaudeCodeWorkActivity = false
+        showMusicInAppsBar = true
+        showCalendarInAppsBar = true
+        showCodexInAppsBar = true
+        showOpenCodeInAppsBar = true
+        showClaudeCodeInAppsBar = true
+        appsBarScale = 1.0
+        notchWidthScale = 1.0
+        notchHeightScale = 1.0
         showArtwork = true
         showUpNext = true
         showRecentlyPlayed = true
@@ -225,5 +323,9 @@ final class HaloSettings: ObservableObject {
 
     private static func integer(_ key: String, defaults: UserDefaults, fallback: Int) -> Int {
         defaults.object(forKey: key) as? Int ?? fallback
+    }
+
+    private static func double(_ key: String, defaults: UserDefaults, fallback: Double) -> Double {
+        defaults.object(forKey: key) as? Double ?? fallback
     }
 }
