@@ -56,6 +56,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --filter UpN
 - Calendar/Reminders filtering, ordering, in-progress event retention, overdue-reminder persistence, relative time labels, start-boundary detection, rail limits, exact native item URLs, Maps links, web-link filtering, and event duration ranges.
 - UserDefaults-backed preference restoration and persistence of the automatic permission-request ledger.
 - Shared scroll-rail geometry: row spacing, viewport clamping, empty input, invalid dimensions, and the overflow threshold.
+- Codex app-server parsing and display contracts: approval/waiting state, compact labels, thread metadata, optional WORK activity filtering and status details, private-reasoning omission, and Codex activity priority.
 - Music scripting queue payload parsing.
 - Playback progress and recent-track attachment behavior.
 - Gzip decoding, protobuf title/artist parsing, archive parsing, JSON extraction, and artwork URL normalization.
@@ -77,6 +78,7 @@ The archive, queue, priority, positioning, and parser tests use synthetic or pur
 - End-to-end AppleScript tests against Music and Spotify.
 - Live Open-Meteo, iTunes Lookup, Spotify artwork, or CDN tests.
 - Full Disk Access success/failure integration tests.
+- Live `codex app-server` turns, approvals, and Codex CLI authentication/configuration.
 - Multi-display, fullscreen, sleep/wake, and real hover hit-testing automation.
 
 Live integrations should be tested manually on a development Mac, because tests that control media players or depend on TCC state are difficult to make reliable in CI.

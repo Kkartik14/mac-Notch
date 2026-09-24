@@ -24,10 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notificationMonitor = NotificationMonitor()
     private let calendarMonitor = CalendarMonitor()
     private let historyMonitor = PlaybackHistoryMonitor()
+    private let codexMonitor = CodexMonitor()
     private let settingsWindowController = HaloSettingsWindowController()
     private let settings = HaloSettings.shared
     private var settingsObservation: AnyCancellable?
     private var wasPluggedIn = false
+    private var codexWasWaiting = false
+    private var codexRequested = false
 
     /// Transport routing: the player that is currently playing owns the
     /// keys. Otherwise prefer Spotify, then Music, then system MediaRemote.
@@ -152,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showWeather: { [weak self] in self?.showWeather() },
             showFocus: { [weak self] in self?.showFocus() },
             showCalendar: { [weak self] in self?.showCalendar() },
+            showCodex: { [weak self] in self?.showCodex() },
             previewPillMusic: { [weak self] in self?.previewPill("nowPlaying") },
             previewPillWeather: { [weak self] in self?.previewPill("weather") },
             previewPillCharging: { [weak self] in self?.previewPill("charging") },
@@ -211,6 +215,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !settings.showCalendarEvents && !settings.showReminders {
             haloController.center.dismiss("calendar")
         }
+        if !settings.showCodex {
+            haloController.center.dismiss("codex")
+            codexMonitor.stop()
+        } else if codexMonitor.connection == .stopped {
+            codexMonitor.start()
+        }
     }
 
     private func startMonitors() {
@@ -235,6 +245,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         haloController.center.onOpenCalendarURL = { [weak self] url in
             self?.openCalendarURL(url)
         }
+        haloController.center.onSelectCodexChat = { [weak self] id in
+            self?.codexMonitor.selectChat(id)
+        }
+        haloController.center.onNewCodexChat = { [weak self] in
+            self?.codexMonitor.createChat()
+        }
+        haloController.center.onRefreshCodex = { [weak self] in
+            self?.codexMonitor.refresh()
+        }
+        haloController.center.onSendCodex = { [weak self] text in
+            self?.codexMonitor.send(text)
+        }
+        haloController.center.onInterruptCodex = { [weak self] in
+            self?.codexMonitor.interrupt()
+        }
+        haloController.center.onResolveCodexApproval = { [weak self] decision in
+            self?.codexMonitor.resolveApproval(decision)
+        }
+
+        // Codex — a local app-server stream, never terminal scraping. The
+        // monitor publishes the same activity for the compact pill and the
+        // fixed-size expanded chat workspace.
+        codexMonitor.onActivity = { [weak self] activity in
+            guard let self, self.settings.showCodex else { return }
+            let shouldSurface = !activity.chats.isEmpty || self.codexRequested
+            guard shouldSurface else { return }
+
+            let becameWaiting = activity.selectedState == .waiting && !self.codexWasWaiting
+            self.codexWasWaiting = activity.selectedState == .waiting
+            self.haloController.show(
+                .codex(activity),
+                autoDismissAfter: nil,
+                expand: becameWaiting && self.settings.automaticallyExpandActivities,
+                collapseAfter: nil
+            )
+        }
+        if settings.showCodex { codexMonitor.start() }
 
         // Now Playing — track changes pop the card open and it STAYS open
         // until dismissed. No auto-collapse: collapsing on its own is what
@@ -488,6 +535,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let calendarItem = NSMenuItem(title: "Calendar", action: #selector(showCalendar), keyEquivalent: "k")
         calendarItem.target = self
         menu.addItem(calendarItem)
+        let codexItem = NSMenuItem(title: "Codex · Developer activity", action: #selector(showCodex), keyEquivalent: "x")
+        codexItem.target = self
+        menu.addItem(codexItem)
         let pillMenu = NSMenu()
         let pillDefs: [(String, Selector)] = [
             ("Pill · Music", #selector(previewPillMusic)),
@@ -573,6 +623,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         calendarMonitor.refresh()
         guard let current = calendarMonitor.current else { return }
         haloController.show(.calendar(current), autoDismissAfter: nil, expand: true)
+    }
+
+    /// Open the Codex activity in Halo's existing fixed expanded surface.
+    /// Selecting this action also makes an empty or unavailable state visible,
+    /// so the user gets a useful explanation instead of a silent no-op.
+    @objc private func showCodex() {
+        guard settings.showCodex else {
+            openSettings()
+            return
+        }
+        codexRequested = true
+        codexMonitor.start()
+        haloController.show(.codex(codexMonitor.activity), autoDismissAfter: nil, expand: true)
     }
 
     /// Preview any activity as a settled pill (expand:false), live data when

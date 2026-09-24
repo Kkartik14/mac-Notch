@@ -67,6 +67,13 @@ Weather refreshes every ten minutes and throttles requests to at most once every
 - A timed event is shown as a passive pill before it starts and expands once at its start time. Halo does not play a sound or send a duplicate native Calendar notification.
 - Tap the circle on an expanded reminder row to mark it complete. The row disappears after EventKit confirms the save.
 
+## Ask Codex does not send
+
+- Confirm the bundled Halo.app can find the authenticated `codex` executable. Halo launches `codex app-server --stdio` locally and does not store Codex credentials.
+- Halo attempts `thread/resume` for the selected history before sending, including stored/paginated histories whose list entry does not state whether input is accepted. If Codex reports that the chat is already owned by another active session, Halo hands the message to that session through the installed CLI's experimental queue API and shows `QUE` while it is pending. Keep the owning Codex session running; Halo briefly refreshes the history after the handoff. If the queue API is unavailable or fails, update Codex and retry. If Codex explicitly reports that the chat cannot accept direct input, Halo disables that composer instead of silently creating a different chat; click the + New chat button to start a writable chat in the same workspace.
+- If the composer does not accept keyboard input, restart the rebuilt Halo.app; the halo panel must become the key window when the composer is clicked.
+- If a turn is waiting, resolve the inline command/file approval or use Stop Codex before sending another request.
+
 ## Tests cannot find XCTest
 
 Use the full Xcode developer directory:

@@ -40,7 +40,7 @@ Launch-at-login is registered through `SMAppService`; its status is read from ma
 
 ## Activity state
 
-HaloActivity has six cases:
+HaloActivity has seven cases:
 
 - nowPlaying
 - charging
@@ -48,6 +48,7 @@ HaloActivity has six cases:
 - focus
 - weather
 - calendar
+- codex
 
 Each case has a stable identifier, so a source refresh replaces its existing activity instead of adding a duplicate. HaloCenter.activities stores up to four activities. The array is ordered from lowest to highest priority; the last element is the activity shown in the collapsed pill.
 
@@ -57,6 +58,7 @@ The current ranks are:
 | ---: | --- | --- |
 | 4 | Notification | Transient event that should be visible immediately. |
 | 3 | Now Playing | Primary live activity. |
+| 3 | Codex | Developer work is useful live context, but should not eclipse a transient notification. |
 | 2 | Focus | Ambient system state. |
 | 2 | Calendar | Upcoming time-sensitive events and reminders. |
 | 1 | Charging | Ambient power state, with a temporary plug-in override. |
@@ -143,6 +145,14 @@ If no queue is available, the UI uses the recent-track list. Queue rows with pla
 [CalendarMonitor](../Sources/Halo/CalendarMonitor.swift) owns one `EKEventStore` and keeps Calendar events and incomplete Reminders separate from the rest of the UI as value types. It requests Calendar and Reminders access independently, so granting one does not require the other. Events are fetched from the beginning of today through the configured lookahead (seven days by default); reminders with due dates are fetched asynchronously and merged into one sorted list capped at the configured item limit (25 by default), so overdue incomplete reminders remain visible until completion. An `EKEventStoreChanged` observer, a one-minute timer, and system wake/clock/locale observers cover edits, sleep/wake, and ordinary clock changes. The monitor also schedules a one-shot timer for the next future timed event, then compares the previous and current value snapshots to emit exactly one start transition. This avoids a high-frequency poller and avoids alerting for an event first seen after the app launches while it is already in progress.
 
 The expanded Calendar card gives the next item a fixed detail column and places the remaining returned items in a bounded, vertically scrollable Up Next column. All vertical rails use the shared [`HaloScrollView`](../Sources/Halo/HaloScrollView.swift), which owns the `ScrollView`, lazy stack, spacing, viewport limit, and indicator policy; [`HaloScrollMetrics`](../Sources/Halo/HaloScrollView.swift) keeps fixed-row sizing and scroll-threshold calculations pure and testable. Clicking an event or reminder title/time builds the owning app's native item URL (`ical://ekevent/...` or `x-apple-reminderkit://REMCDReminder/...`) and falls back to opening the app if macOS rejects the deep link. Event rows show start/end ranges, location controls open `maps://` searches in Apple Maps, and HTTP(S) EventKit URLs appear as optional meeting-link actions. The completion button remains a separate reminder-only action. Relative time is rendered through a SwiftUI `TimelineView`, so the countdown changes without rewriting the EventKit activity. A start transition expands the card once for four seconds and then leaves the live calendar pill in place; it does not create an event or schedule a duplicate system notification. Reminder rows expose a completion button; `completeReminder` resolves the EventKit identifier, saves `isCompleted = true`, and refreshes the activity. Missing permissions, malformed items, and reminders without due dates are ignored quietly.
+
+### Codex developer activity
+
+[CodexMonitor](../Sources/Halo/CodexMonitor.swift) launches the installed Codex CLI as `codex app-server --stdio` and speaks newline-delimited JSON-RPC. It performs the protocol handshake, lists recent threads, selects the newest-created thread when no chat has been selected, loads up to 100 visible items for the selected thread, and maps app-server lifecycle notifications into Halo value types. `updatedAt` is used only as a tie-breaker for that initial choice. User messages are sent with `turn/start`; stored threads are resumed first, including paginated records whose list response omits direct-input capability, and an explicit New chat action uses `thread/start` in the selected workspace. The resume response is the capability check before a pending message is sent. If the selected thread is already owned by another active Codex session, an active-writer error triggers the experimental `thread/queue/add` handoff instead of being mistaken for a successful resume. Halo keeps the optimistic user message visible, marks the thread `QUE`, and performs a short one-second history refresh for up to two minutes so the separate session's persisted response can appear. If the queue handoff fails, or the server explicitly returns a non-writable capability, `CodexMonitor` keeps that chat read-only/failed and does not silently switch conversations.
+
+The monitor intentionally keeps the protocol boundary separate from SwiftUI. [CodexView.swift](../Sources/Halo/CodexView.swift) renders the same `CodexActivity` in both the compact pill and the fixed expanded card, with a scrollable chat rail, a scrollable visible activity rail, a composer, a stop action, and inline command/file approval controls. Reasoning items are omitted from the UI. User and assistant messages remain visible by default; actionable WORK items are filtered by the Codex WORK activity preference and keep primary text separate from secondary status/context when enabled. Approval prompts remain visible while a turn is waiting so the user can unblock it.
+
+The app-server process inherits the user's Codex environment and configuration. Halo never handles Codex credentials or maintains a second rollout database. If the CLI is missing, the activity reports a recoverable unavailable state. If the server sends an interactive request Halo does not implement, the client returns an explicit JSON-RPC error rather than leaving the turn pending forever.
 
 ## Threading assumptions
 
