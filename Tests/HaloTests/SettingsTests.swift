@@ -10,6 +10,10 @@ final class HaloSettingsTests: XCTestCase {
         let first = HaloSettings(defaults: defaults)
         first.automaticallyExpandActivities = false
         first.showRecentlyPlayed = false
+        XCTAssertFalse(first.showCodexWorkActivity)
+        first.showCodexWorkActivity = true
+        XCTAssertFalse(first.showClaudeCodeWorkActivity)
+        first.showClaudeCodeWorkActivity = true
         first.calendarLookaheadDays = 14
         first.calendarItemLimit = 40
         first.calendarShowDuration = false
@@ -17,6 +21,8 @@ final class HaloSettingsTests: XCTestCase {
         let second = HaloSettings(defaults: defaults)
         XCTAssertFalse(second.automaticallyExpandActivities)
         XCTAssertFalse(second.showRecentlyPlayed)
+        XCTAssertTrue(second.showCodexWorkActivity)
+        XCTAssertTrue(second.showClaudeCodeWorkActivity)
         XCTAssertEqual(second.calendarLookaheadDays, 14)
         XCTAssertEqual(second.calendarItemLimit, 40)
         XCTAssertFalse(second.calendarShowDuration)

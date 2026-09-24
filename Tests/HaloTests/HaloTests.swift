@@ -32,6 +32,54 @@ final class HaloCenterTests: XCTestCase {
         XCTAssertEqual(c.activities.count, 1, "activity must survive the settle")
     }
 
+    func testAdminOverrideSurvivesNormalCollapseAndKeepsOpenCodeSelected() {
+        let c = HaloCenter()
+        c.present(.openCode(OpenCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            pendingPermission: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .expand(.user))
+
+        XCTAssertEqual(c.expandedId, "openCode")
+        XCTAssertEqual(c.manualOverrideID, "openCode")
+        c.collapse("openCode")
+        XCTAssertNil(c.expandedId, "pointer exit must minimize the expanded card")
+        XCTAssertEqual(c.manualOverrideID, "openCode")
+
+        c.present(.codex(CodexActivity(
+            chats: [], selectedChatID: nil, messages: [], connection: .connected,
+            pendingApproval: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        XCTAssertEqual(c.manualOverrideID, "openCode", "passive Codex updates must not replace the override")
+        XCTAssertFalse(c.canAutomaticallyExpand("codex"), "Codex must not take over the selected OpenCode pill")
+        XCTAssertTrue(c.canAutomaticallyExpand("openCode"))
+
+        c.toggleExpandTop()
+        XCTAssertEqual(c.expandedId, "openCode", "the selected pill must reopen OpenCode")
+        c.collapse("openCode")
+
+        c.present(.codex(CodexActivity(
+            chats: [], selectedChatID: nil, messages: [], connection: .connected,
+            pendingApproval: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .expand(.user))
+        XCTAssertEqual(c.manualOverrideID, "codex", "a new explicit choice must replace the old override")
+        XCTAssertEqual(c.expandedId, "codex")
+    }
+
+    func testNewerCollapseScheduleSupersedesOlderCallback() {
+        let c = HaloCenter()
+        let first = NotificationActivity(appName: "A", sender: "B", body: "First", icon: "m")
+        let second = NotificationActivity(appName: "A", sender: "B", body: "Second", icon: "m")
+        c.present(.notification(first), autoDismissAfter: nil, expand: true, collapseAfter: 0.2)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        c.present(.notification(second), autoDismissAfter: nil, expand: true, collapseAfter: 0.6)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(c.expandedId, "notification", "an older delayed collapse must not win")
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.45))
+        XCTAssertNil(c.expandedId, "the newest collapse schedule should still settle the card")
+    }
+
     func testQuietMonitorUpdatesNeverHijack() {
         let c = HaloCenter()
         c.present(.weather(WeatherActivity(temperatureC: 15, condition: "Clear", symbol: "s")),
@@ -43,6 +91,27 @@ final class HaloCenterTests: XCTestCase {
                   autoDismissAfter: nil, expand: false)
         XCTAssertNil(c.expandedId)
         XCTAssertEqual(c.activities.count, 1, "same id must update in place, not duplicate")
+    }
+
+    func testAutomaticExpansionCannotReplaceAnActiveProvider() {
+        let c = HaloCenter()
+        c.present(.openCode(OpenCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            pendingPermission: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .expand(.user))
+
+        XCTAssertEqual(c.manualOverrideID, "openCode")
+        XCTAssertFalse(c.canAutomaticallyExpand("codex"))
+        XCTAssertTrue(c.canAutomaticallyExpand("openCode"))
+
+        c.toggleExpand("codex")
+        XCTAssertEqual(c.expandedId, "openCode", "a generic pill tap must not replace a manual selection")
+
+        c.collapse("openCode")
+        XCTAssertNil(c.expandedId)
+        XCTAssertEqual(c.manualOverrideID, "openCode")
+        XCTAssertFalse(c.canAutomaticallyExpand("codex"))
+        XCTAssertTrue(c.canAutomaticallyExpand("openCode"))
     }
 
     func testDismissFallsBackToPreviousActivity() {
@@ -228,6 +297,35 @@ final class PriorityTests: XCTestCase {
         XCTAssertEqual(c.activities.map(\.id), ["weather", "charging", "calendar", "nowPlaying"])
     }
 
+    func testExplicitCalendarSelectionSurvivesAFullActivityStack() {
+        let c = HaloCenter()
+        c.present(.codex(CodexActivity(
+            chats: [], selectedChatID: nil, messages: [], connection: .connected,
+            pendingApproval: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        c.present(.openCode(OpenCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            pendingPermission: nil, errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        c.present(.claudeCode(ClaudeCodeActivity(
+            sessions: [], selectedSessionID: nil, messages: [], connection: .connected,
+            errorMessage: nil
+        )), autoDismissAfter: nil, intent: .update)
+        c.present(.nowPlaying(NowPlayingActivity(
+            title: "Track", artist: "Artist", isPlaying: false
+        )), autoDismissAfter: nil, intent: .update)
+
+        c.present(
+            .calendar(CalendarActivity(items: [])),
+            autoDismissAfter: nil,
+            intent: .expand(.user)
+        )
+
+        XCTAssertEqual(c.activities.count, 4)
+        XCTAssertTrue(c.activities.contains { $0.id == "calendar" })
+        XCTAssertEqual(c.expandedId, "calendar")
+    }
+
     func testPlugOverrideAndReturn() {
         let c = HaloCenter()
         c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: false)
@@ -236,6 +334,17 @@ final class PriorityTests: XCTestCase {
         XCTAssertEqual(c.activities.last?.id, "charging")
         c.applyPriorityOrder()
         XCTAssertEqual(c.activities.map(\.id), ["charging", "nowPlaying"])
+    }
+
+    func testPriorityRestoreKeepsTheCurrentlyExpandedCard() {
+        let c = HaloCenter()
+        c.present(.nowPlaying(NowPlayingActivity(title: "T", artist: "A", isPlaying: true)), autoDismissAfter: nil, expand: true)
+        c.present(.charging(ChargingActivity(level: 0.5, isPluggedIn: true, timeRemainingText: nil)), autoDismissAfter: nil, expand: false)
+
+        c.moveToTop("charging")
+        c.applyPriorityOrder()
+
+        XCTAssertEqual(c.expandedId, "nowPlaying", "reordering must not replace the card being viewed")
     }
 }
 

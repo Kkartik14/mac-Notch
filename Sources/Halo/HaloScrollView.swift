@@ -59,6 +59,8 @@ where Data.Element: Identifiable {
     private let maximumHeight: CGFloat
     private let rowHeight: CGFloat?
     private let rowSpacing: CGFloat
+    private let scrollToBottomOnChange: Bool
+    private let scrollTrigger: String?
     private let rowContent: (Data.Element) -> RowContent
 
     init(
@@ -66,12 +68,16 @@ where Data.Element: Identifiable {
         maximumHeight: CGFloat = HaloScrollMetrics.defaultMaximumHeight,
         rowHeight: CGFloat? = nil,
         rowSpacing: CGFloat = HaloScrollMetrics.defaultRowSpacing,
+        scrollToBottomOnChange: Bool = false,
+        scrollTrigger: String? = nil,
         @ViewBuilder rowContent: @escaping (Data.Element) -> RowContent
     ) {
         self.items = items
         self.maximumHeight = maximumHeight
         self.rowHeight = rowHeight
         self.rowSpacing = max(0, rowSpacing)
+        self.scrollToBottomOnChange = scrollToBottomOnChange
+        self.scrollTrigger = scrollTrigger
         self.rowContent = rowContent
     }
 
@@ -95,13 +101,38 @@ where Data.Element: Identifiable {
     }
 
     private var scrollContent: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            LazyVStack(alignment: .leading, spacing: rowSpacing) {
-                ForEach(items) { item in
-                    rowContent(item)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVStack(alignment: .leading, spacing: rowSpacing) {
+                    ForEach(items) { item in
+                        rowContent(item)
+                            .id(item.id)
+                    }
+
+                    if scrollToBottomOnChange {
+                        Color.clear
+                            .frame(height: 1)
+                            .id("halo-scroll-bottom")
+                    }
                 }
             }
+            .scrollIndicators(.automatic)
+            .onAppear { scrollToBottom(using: proxy) }
+            .onChange(of: scrollChangeKey) { _, _ in
+                scrollToBottom(using: proxy)
+            }
         }
-        .scrollIndicators(.automatic)
+    }
+
+    private var scrollChangeKey: String {
+        if let scrollTrigger { return scrollTrigger }
+        return items.map { String(describing: $0.id) }.joined(separator: "\u{1F}")
+    }
+
+    private func scrollToBottom(using proxy: ScrollViewProxy) {
+        guard scrollToBottomOnChange, !items.isEmpty else { return }
+        DispatchQueue.main.async {
+            proxy.scrollTo("halo-scroll-bottom", anchor: .bottom)
+        }
     }
 }
